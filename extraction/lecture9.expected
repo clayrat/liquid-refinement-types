@@ -1,0 +1,317 @@
+
+=== 1. Contracts of functions: f 1 + 2 ===
+
+-- the program
+f : {x:Int | 0 ≤ x ∧ x < 2} → {ν:Int | 0 ≤ ν ∧ ν < 4}
+f x =
+  let y = x + 1 in
+  y
+
+-- the body against the contract
+  [result of f]
+    0 ≤ x ∧ x < 2, y = x + 1 ⊢ 0 ≤ y ∧ y < 4
+    Proved
+      0 ≤ y by the cycle [0 ≤ x; x + 1 ≤ y; y + 1 ≤ 0]
+      y - 3 ≤ 0 by the cycle [4 ≤ y; y - 1 ≤ x; x - 1 ≤ 0]
+  => accepted
+
+-- the client
+    let r = f 1 in
+    let s = r + 2 in
+    s
+  required: ν < 6
+  wp:
+    0 ≤ 1 ∧ 1 < 2
+    ∧
+    ∀r.
+      0 ≤ r ∧ r < 4 ⇒
+        true
+        ∧
+        ∀s.
+          s = r + 2 ⇒
+            s < 6
+  flattened:
+    [pre of f at r in client] ⊢ 0 ≤ 1 ∧ 1 < 2
+    [result of client] 0 ≤ r ∧ r < 4, s = r + 2 ⊢ s < 6
+  [pre of f at r in client]
+    ⊢ 0 ≤ 1 ∧ 1 < 2
+    Proved
+      true
+      true
+  [result of client]
+    0 ≤ r ∧ r < 4, s = r + 2 ⊢ s < 6
+    Proved
+      s - 5 ≤ 0 by the cycle [6 ≤ s; s - 2 ≤ r; r - 3 ≤ 0]
+  => accepted
+  run client: Value 4
+
+-- the body replaced by 3: the contract and the check of the client stay
+f : {x:Int | 0 ≤ x ∧ x < 2} → {ν:Int | 0 ≤ ν ∧ ν < 4}
+f x =
+  3
+  [result of f]
+    0 ≤ x ∧ x < 2 ⊢ 0 ≤ 3 ∧ 3 < 4
+    Proved
+      true
+      true
+  => accepted
+  [pre of f at r in client]
+    ⊢ 0 ≤ 1 ∧ 1 < 2
+    Proved
+      true
+      true
+  [result of client]
+    0 ≤ r ∧ r < 4, s = r + 2 ⊢ s < 6
+    Proved
+      s - 5 ≤ 0 by the cycle [6 ≤ s; s - 2 ≤ r; r - 3 ≤ 0]
+  => accepted
+  run client: Value 5
+
+-- f 2 violates the precondition
+    let r = f 2 in
+    let s = r + 2 in
+    s
+  required: ν < 6
+  [pre of f at r in client]
+    ⊢ 0 ≤ 2 ∧ 2 < 2
+    Refuted: any valuation
+  [result of client]
+    0 ≤ r ∧ r < 4, s = r + 2 ⊢ s < 6
+    Proved
+      s - 5 ≤ 0 by the cycle [6 ≤ s; s - 2 ≤ r; r - 3 ≤ 0]
+  => rejected
+
+-- so does f 2 with its result unused
+    let r = f 2 in
+    0
+  required: true
+  [pre of f at r in client]
+    ⊢ 0 ≤ 2 ∧ 2 < 2
+    Refuted: any valuation
+  => rejected
+  run client (the body does not fail): Value 0
+
+=== 2. inc 0 = 1 through the name of the result ===
+
+-- the program
+inc : x:Int → {ν:Int | ν = x + 1}
+inc x =
+  let y = x + 1 in
+  y
+  [result of inc]
+    y = x + 1 ⊢ y = x + 1
+    Proved
+      y - 1 ≤ x by the cycle [x + 2 ≤ y; y - 1 ≤ x]
+      x + 1 ≤ y by the cycle [y ≤ x; x + 1 ≤ y]
+  => accepted
+
+-- the client
+    let r = inc 0 in
+    r
+  required: ν = 1
+
+-- the main rule: Post_inc(0, r) after the call
+  [result of client]
+    r = 0 + 1 ⊢ r = 1
+    Proved
+      r - 1 ≤ 0 by the cycle [r - 1 ≤ 0; 2 ≤ r]
+      1 ≤ r by the cycle [1 ≤ r; r ≤ 0]
+  => accepted
+
+-- the root rule APPc: Pre_inc(r.x) ∧ Post_inc(r.x, r) for a fresh r.x
+  [result of client]
+    r = r.x + 1 ⊢ r = 1
+    Refuted: r.x = 1, r = 2
+  => rejected
+
+-- two calls f 0: fresh names of results are not the function symbol δ
+    let r1 = f 0 in
+    let r2 = f 0 in
+    let d = r1 - r2 in
+    d
+  required: ν = 0
+  [pre of f at r1 in client]
+    ⊢ 0 ≤ 0 ∧ 0 < 2
+    Proved
+      true
+      true
+  [pre of f at r2 in client]
+    0 ≤ r1 ∧ r1 < 4 ⊢ 0 ≤ 0 ∧ 0 < 2
+    Proved
+      true
+      true
+  [result of client]
+    0 ≤ r1 ∧ r1 < 4, 0 ≤ r2 ∧ r2 < 4, d = r1 - r2 ⊢ d = 0
+    Unknown: the model of the fragment does not falsify the obligation (a dropped hypothesis)
+  => rejected
+  run client: Value 0
+
+=== 3. The traversal of an array ===
+
+-- the program with the invariant given: 0 ≤ i ∧ i ≤ n
+sum : a:Array Int → ν:Int
+sum a =
+  let n = length a in
+  let s = go a n 0 in
+  s
+
+go : a:Array Int → {n:Int | n = len a ∧ 0 ≤ n} → {i:Int | 0 ≤ i ∧ i ≤ n} → ν:Int
+go a n i =
+  if i < n then
+    let x = get a i in
+    let j = i + 1 in
+    let s = go a n j in
+    let r = x + s in
+    r
+  else
+    0
+  [pre of go at s in sum]
+    n = len a ∧ 0 ≤ n ⊢ n = len a ∧ 0 ≤ n ∧ 0 ≤ 0 ∧ 0 ≤ n
+    Proved
+      n ≤ len a by the cycle [len a + 1 ≤ n; n ≤ len a]
+      len a ≤ n by the cycle [n + 1 ≤ len a; len a ≤ n]
+      0 ≤ n by the cycle [0 ≤ len a; len a ≤ n; n + 1 ≤ 0]
+      true
+      0 ≤ n by the cycle [0 ≤ len a; len a ≤ n; n + 1 ≤ 0]
+  [pre of get at x in go]
+    n = len a ∧ 0 ≤ n, 0 ≤ i ∧ i ≤ n, i < n ⊢ 0 ≤ i ∧ i < len a
+    Proved
+      0 ≤ i by the cycle [0 ≤ i; i + 1 ≤ 0]
+      i + 1 ≤ len a by the cycle [len a ≤ i; i + 1 ≤ n; n ≤ len a]
+  [pre of go at s in go]
+    n = len a ∧ 0 ≤ n, 0 ≤ i ∧ i ≤ n, i < n, j = i + 1 ⊢ n = len a ∧ 0 ≤ n ∧ 0 ≤ j ∧ j ≤ n
+    Proved
+      n ≤ len a by the cycle [len a + 1 ≤ n; n ≤ len a]
+      len a ≤ n by the cycle [n + 1 ≤ len a; len a ≤ n]
+      0 ≤ n by the cycle [i + 1 ≤ n; n + 1 ≤ 0; 0 ≤ i]
+      0 ≤ j by the cycle [i + 1 ≤ j; j + 1 ≤ 0; 0 ≤ i]
+      j ≤ n by the cycle [i + 1 ≤ n; n + 1 ≤ j; j - 1 ≤ i]
+  => accepted
+
+-- the invariant as an unknown κ(i, n)
+  Q = {0 ≤ i, i ≤ n, i < n, i = 0}
+  weakening:
+  round 1
+    pre of go at s in sum ⊢ κ: 0 ≤ i, i ≤ n, i = 0
+    removed i < n (counter-model n = 0, len a = 0)
+    pre of go at s in go ⊢ κ: 0 ≤ i, i ≤ n
+    removed i = 0 (counter-model n = 1, i = 0, j = 1, len a = 1)
+  round 2
+    pre of go at s in sum ⊢ κ: 0 ≤ i, i ≤ n
+    nothing removed
+    pre of go at s in go ⊢ κ: 0 ≤ i, i ≤ n
+    nothing removed
+  inferred: κ := 0 ≤ i, i ≤ n
+  the contracts after substitution:
+    sum : a:Array Int → ν:Int
+    go : a:Array Int → {n:Int | n = len a ∧ 0 ≤ n} → {i:Int | 0 ≤ i ∧ i ≤ n} → ν:Int
+  rechecked by the first algorithm: 3 obligations, all proved
+  run sum []: Value 0
+  run sum [1; 2; 3]: Value 6
+  run sum [5; -7; 11; 13]: Value 22
+
+-- termination of go: the measure n − i, a check of its own
+  [measure of go non-negative]
+    n = len a ∧ 0 ≤ n, 0 ≤ i ∧ i ≤ n ⊢ 0 ≤ n - i
+    Proved
+      i ≤ n by the cycle [i ≤ n; n + 1 ≤ i]
+  [measure of go decreases at s]
+    n = len a ∧ 0 ≤ n, 0 ≤ i ∧ i ≤ n, i < n, j = i + 1 ⊢ n - j < n - i
+    Proved
+      i + 1 ≤ j by the cycle [j ≤ i; i + 1 ≤ j]
+  => accepted
+  the fuel of sum: 4·len a + 4 (sum_fuel, Examples/Sum.v)
+  run sum [1; 2; 3] with fuel 15: Timeout
+  run sum [1; 2; 3] with fuel 16: Value 6
+
+-- the invariant 0 ≤ i alone: the reads are safe, the measure is not non-negative
+  [pre of go at s in sum] Proved
+  [pre of get at x in go] Proved
+  [pre of go at s in go] Proved
+  => accepted
+  [measure of go non-negative]
+    n = len a ∧ 0 ≤ n, 0 ≤ i ⊢ 0 ≤ n - i
+    Refuted: n = 0, i = 1, len a = 0
+  [measure of go decreases at s]
+    n = len a ∧ 0 ≤ n, 0 ≤ i, i < n, j = i + 1 ⊢ n - j < n - i
+    Proved
+      i + 1 ≤ j by the cycle [j ≤ i; i + 1 ≤ j]
+  => rejected
+
+-- the error of bounds: i ≤ n instead of i < n
+  weakening:
+  round 1
+    pre of go at s in sum ⊢ κ: 0 ≤ i, i ≤ n, i = 0
+    removed i < n (counter-model n = 0, len a = 0)
+    pre of go at s in go ⊢ κ: 0 ≤ i
+    removed i ≤ n (counter-model n = 0, i = 0, j = 1, len a = 0); removed i = 0 (counter-model n = 0, i = 0, j = 1, len a = 0)
+  round 2
+    pre of go at s in sum ⊢ κ: 0 ≤ i
+    nothing removed
+    pre of go at s in go ⊢ κ: 0 ≤ i
+    nothing removed
+  refused at [pre of get at x in go]
+    n = len a, 0 ≤ n, 0 ≤ i, i ≤ n ⊢ i < len a
+    counter-model: i = 0, n = 0, len a = 0
+  run sum []: Stuck: get [] 0 out of bounds (length 0)
+  run sum [1; 2; 3]: Stuck: get [1; 2; 3] 3 out of bounds (length 3)
+  run sum [5; -7; 11; 13]: Stuck: get [5; -7; 11; 13] 4 out of bounds (length 4)
+
+-- an abstraction too coarse: Q without 0 ≤ i
+  Q = {i ≤ n, i < n, i = 0}
+  weakening:
+  round 1
+    pre of go at s in sum ⊢ κ: i ≤ n, i = 0
+    removed i < n (counter-model n = 0, len a = 0)
+    pre of go at s in go ⊢ κ: i ≤ n
+    removed i = 0 (counter-model n = 1, i = 0, j = 1, len a = 1)
+  round 2
+    pre of go at s in sum ⊢ κ: i ≤ n
+    nothing removed
+    pre of go at s in go ⊢ κ: i ≤ n
+    nothing removed
+  refused at [pre of get at x in go]
+    n = len a, 0 ≤ n, i ≤ n, i < n ⊢ 0 ≤ i
+    counter-model: i = -1, n = 0, len a = 0
+  the same program as in the first outcome:
+  run sum []: Value 0
+  run sum [1; 2; 3]: Value 6
+  run sum [5; -7; 11; 13]: Value 22
+
+=== 4. loop with the refinement false ===
+
+-- the program
+loop : x:Int → {ν:Int | false}
+loop x =
+  let r = loop x in
+  r
+  [result of loop]
+    false ⊢ false
+    Proved
+      hypotheses contradictory: [1 ≤ 0]
+  => accepted
+
+-- the client
+  free: a:Array Int
+    let r = loop 0 in
+    let y = get a 100 in
+    y
+  required: true
+  [pre of get at y in client]
+    false ⊢ 0 ≤ 100 ∧ 100 < len a
+    Proved
+      true
+      101 ≤ len a by the cycle [1 ≤ 0]
+  => accepted
+  run client on [] with fuel 10: Timeout
+  run client on [] with fuel 100: Timeout
+  run client on [] with fuel 1000: Timeout
+
+-- no measure: the call repeats the argument, μ < μ (loop_no_measure, Examples/Loop.v)
+  [measure of loop non-negative]
+    ⊢ 0 ≤ x
+    Refuted: x = -1
+  [measure of loop decreases at r]
+    ⊢ x < x
+    Refuted: any valuation
+  => rejected

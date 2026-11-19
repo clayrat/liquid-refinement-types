@@ -1,0 +1,47 @@
+-Q theories Liquid
+-docroot Liquid
+
+# Common: the monads, copied (PORTING.md).
+theories/Common/Result.v
+theories/Common/Traced.v
+
+# Logic: formulas, substitution and obligations; independent of Lang.
+theories/Logic/Formula.v
+theories/Logic/Subst.v
+theories/Logic/Obligation.v
+
+# Solver: the difference solver with certificates; independent of Lang.
+theories/Solver/Diff.v
+theories/Solver/Linear.v
+theories/Solver/Prove.v
+
+# Lang: the first-order language in ANF and its evaluator with fuel.
+theories/Lang/Syntax.v
+theories/Lang/Typing.v
+theories/Lang/Eval.v
+theories/Lang/EvalFacts.v
+
+# Refine: the first algorithm, contracts checked by wp and gen.
+theories/Refine/Spec.v
+theories/Refine/Wp.v
+theories/Refine/Gen.v
+theories/Refine/Check.v
+
+# Liquid: the second algorithm; Horn.v and Weaken.v independent of Lang.
+theories/Liquid/Horn.v
+theories/Liquid/Weaken.v
+theories/Liquid/Template.v
+theories/Liquid/Infer.v
+
+# Examples of the lecture.
+theories/Examples/Bounded.v
+theories/Examples/Inc.v
+theories/Examples/Calls.v
+theories/Examples/Sum.v
+theories/Examples/Loop.v
+
+# The operational guarantee, measures and tests.
+theories/Refine/Sound.v
+theories/Refine/Measure.v
+theories/Tests.v
+theories/Contracts.v

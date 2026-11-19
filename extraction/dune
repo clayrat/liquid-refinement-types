@@ -1,0 +1,27 @@
+; generated/ holds the output of Extract.v; it is rebuilt by make and never
+; edited by hand.
+(copy_files generated/{liquid.ml,liquid.mli})
+
+(library
+ (name liquid)
+ (wrapped false)
+ (modules liquid)
+ (libraries zarith)
+ (flags (:standard -w -a)))
+
+(library
+ (name liquid_pretty)
+ (wrapped false)
+ (modules pretty demos)
+ (libraries zarith liquid))
+
+(executable
+ (name main)
+ (modules main)
+ (libraries zarith liquid liquid_pretty))
+
+(test
+ (name regress)
+ (modules regress)
+ (deps lecture9.expected)
+ (libraries zarith liquid liquid_pretty))
