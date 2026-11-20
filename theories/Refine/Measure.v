@@ -17,7 +17,7 @@
     [check_measures] rejects, rather than ignores, a measure of a
     function the program does not define, a second measure of the same
     function, and a measure whose names are not the integer parameters
-    and the arrays of the function.
+    and the arrays and lists of the function.
 
     The obligations of measure are a check of their own: the acceptance
     of the contracts does not imply termination.  [loop] is accepted
@@ -39,7 +39,7 @@ Import ListNotations.
 From Liquid.Common Require Import Result.
 From Liquid.Logic Require Import Formula Subst Obligation.
 From Liquid.Lang Require Import Syntax Eval Typing EvalFacts.
-From Liquid.Refine Require Import Spec Wp Gen Check Sound.
+From Liquid.Refine Require Import Spec Wp Gen Check Env.
 
 Local Open Scope string_scope.
 Local Open Scope list_scope.
@@ -73,6 +73,9 @@ Section Measure.
         end
     | EIf c e1 e2 =>
         decreases f ps μ Γ (extend φ (cond_formula c)) e1 ++ decreases f ps μ Γ (extend φ (FNot (cond_formula c))) e2
+    | EMatch x e1 h t e2 =>
+        decreases f ps μ Γ (extend φ (nil_hyp x)) e1
+          ++ decreases f ps μ ((t, TyList) :: (h, TyInt) :: Γ) (extend φ (cons_hyp x t)) e2
     end.
 
   Definition fun_measure_obligations (fd : fundef) (μ : term) : list obligation :=
@@ -88,7 +91,8 @@ Section Measure.
 End Measure.
 
 (** A measure names a function of the program, and its names are the
-    integer parameters and, under [len], the arrays of that function. *)
+    integer parameters and, under [len], the arrays and lists of that
+    function. *)
 Definition measure_ok (P : prog) (m : string * term) : result string unit :=
   match find_fun (fst m) P with
   | Some fd => require (formula_ok [] (scope_of (fd_params fd)) (FLe (TConst 0) (snd m)))
@@ -137,7 +141,7 @@ Fixpoint callees (e : expr) : list string :=
   | ERet _ => []
   | EPrim _ _ _ e' => callees e'
   | ECall _ g _ e' => g :: callees e'
-  | EIf _ e1 e2 => callees e1 ++ callees e2
+  | EIf _ e1 e2 | EMatch _ e1 _ _ e2 => callees e1 ++ callees e2
   end.
 
 (** An order of the dependencies: a body calls its own function or

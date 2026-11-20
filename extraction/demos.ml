@@ -155,7 +155,34 @@ let demo4 b =
   section b "no measure: the call repeats the argument, μ < μ (loop_no_measure, Examples/Loop.v)";
   report b (check_measures prove loop_prog loop_spec loop_measures)
 
+(* ---- 5. lists: the length of append ---- *)
+
+let lst l = VList (List.map zi l)
+
+let demo5 b =
+  header b "5. Lists: the length of append";
+  section b "the program; the branches of match get len xs = 0 and len xs = 1 + len t";
+  bprintf b "%s\n" (program append_prog append_spec);
+  report b (check_prog prove append_prog append_spec);
+  section b "the summands swapped: len ν = len ys + len xs";
+  bprintf b "  %s : %s\n" append_def.fd_name (contract_sig append_def (contract_of append_spec_swapped append_def));
+  report b (check_prog prove append_prog append_spec_swapped);
+  section b "a wrong contract: len ν = len xs";
+  bprintf b "  %s : %s\n" append_def.fd_name (contract_sig append_def (contract_of append_spec_wrong append_def));
+  report b (check_prog prove append_prog append_spec_wrong);
+  section b "termination: the measure len xs";
+  report b (check_measures prove append_prog append_spec append_measures);
+  bprintf b "  the fuel of append: 2·len xs + 2 (append_fuel, Examples/Append.v)\n";
+  List.iter
+    (fun k ->
+      run_fuel b "append [1; 2] [3]" k append_prog [ ("xs", lst [ 1; 2 ]); ("ys", lst [ 3 ]) ] append_def.fd_body)
+    [ 5; 6 ];
+  section b "the elimination of equalities, exercise 1: d = y − x, the goal 0 < d";
+  client_text b client_ex1;
+  report b (check_client prove [] [] client_ex1);
+  run b "client with x = 1, y = 3" [] [ ("x", VInt (zi 1)); ("y", VInt (zi 3)) ] client_ex1.cl_expr
+
 let all () =
   let b = Buffer.create 65536 in
-  List.iter (fun d -> d b) [ demo1; demo2; demo3; demo4 ];
+  List.iter (fun d -> d b) [ demo1; demo2; demo3; demo4; demo5 ];
   Buffer.contents b

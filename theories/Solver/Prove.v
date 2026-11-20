@@ -22,9 +22,19 @@
       false counter-model, and weakening would remove a qualifier by it;
     - anything else is [Unknown] with a reason.
 
-    The certificate of [Proved] is checked by [check_cert], independently
-    of how it was found; [check_cert_sound] proves that a checked
-    certificate makes the obligation valid.  With [check_counter_sound]
+    If the obligation as it is gets [Unknown], the solver eliminates the
+    equalities among the hypotheses (Solver/Elim.v) and tries the reduced
+    obligation the same way: a hypothesis [d = r₁ − r₂] or
+    [len r = len t + len ys] is outside the fragment, but substituting it
+    can bring the rest into it.  The elimination comes second so that the
+    answers and certificates of obligations already in the fragment stay
+    as they are; it changes only answers [Unknown].
+
+    The certificate of [Proved] — the steps of elimination, if any, and
+    the items — is checked by [check_cert], independently of how it was
+    found: the checker checks and applies the steps itself.
+    [check_cert_sound] proves that a checked certificate makes the
+    obligation valid.  With [check_counter_sound]
     of Logic/Obligation.v this gives [prove_sound]: the difference solver
     is a sound oracle.  Its completeness on the fragment is an open
     obligation of Contracts.v. *)
@@ -32,7 +42,7 @@
 From Stdlib Require Import String List Bool ZArith Lia.
 Import ListNotations.
 From Liquid.Logic Require Import Formula Obligation.
-From Liquid.Solver Require Import Diff Linear.
+From Liquid.Solver Require Import Diff Linear Elim.
 
 Local Open Scope Z_scope.
 Local Open Scope string_scope.
@@ -43,7 +53,13 @@ Inductive cert_item : Type :=
   (** a cycle of the graph with the negation of [goal]; of the graph
       alone for the goal [false] *)
 
-Definition cert : Type := list cert_item.
+(** The steps of elimination (Solver/Elim.v), then one item per
+    conjunct of the reduced goal; without steps, the obligation as it
+    is. *)
+Record cert : Type := mkCert {
+  cert_elim : list elim;
+  cert_items : list cert_item
+}.
 
 (** ** The graph of an obligation *)
 
@@ -85,14 +101,18 @@ Definition item_ok (G : list edge) (a : catom) (ci : cert_item) : bool :=
   | _, _ => false
   end.
 
-Fixpoint items_ok (G : list edge) (gs : list catom) (cs : cert) : bool :=
+Fixpoint items_ok (G : list edge) (gs : list catom) (cs : list cert_item) : bool :=
   match gs, cs with
   | [], [] => true
   | a :: gs', ci :: cs' => item_ok G a ci && items_ok G gs' cs'
   | _, _ => false
   end.
 
-Definition check_cert (ob : obligation) (c : cert) : bool := items_ok (graph_of ob) (goal_atoms ob) c.
+Definition check_cert (ob : obligation) (c : cert) : bool :=
+  match reduce (cert_elim c) ob with
+  | Some ob' => items_ok (graph_of ob') (goal_atoms ob') (cert_items c)
+  | None => false
+  end.
 
 Lemma side_edges_sat : forall ρ n, lens_nonneg ρ -> Forall (edge_sat (nval ρ)) (side_edges n).
 Proof.
@@ -134,12 +154,19 @@ Proof.
   - apply andb_prop in H as [H1 H2]. constructor; [eapply item_ok_sound; eauto | eapply IH; eauto].
 Qed.
 
-Theorem check_cert_sound : forall ob c, check_cert ob c = true -> valid ob.
+Lemma items_valid : forall ob cs, items_ok (graph_of ob) (goal_atoms ob) cs = true -> valid ob.
 Proof.
-  intros ob c H ki ρ Hl Hh. unfold check_cert in H.
+  intros ob cs H ki ρ Hl Hh.
   pose proof (graph_models ki ρ ob Hl Hh) as HG.
   pose proof (items_ok_sound ki ρ _ _ _ HG H) as Hg.
   exact (proj1 (decomp_iff ki ρ true (ob_goal ob)) Hg).
+Qed.
+
+Theorem check_cert_sound : forall ob c, check_cert ob c = true -> valid ob.
+Proof.
+  intros ob c H. unfold check_cert in H.
+  destruct (reduce (cert_elim c) ob) as [ob' | ] eqn:E; [ | discriminate H].
+  exact (reduce_sound _ ob ob' E (items_valid ob' _ H)).
 Qed.
 
 (** ** Finding the certificate *)
@@ -150,7 +177,7 @@ Definition cmodel_of (m : model) : cmodel :=
            (flat_map (fun p => match fst p with NLen a => [(a, snd p)] | _ => [] end) m).
 
 Inductive search : Type :=
-| SCert (c : cert)
+| SCert (c : list cert_item)
 | SCounter (m : model)
 | SUnknown (why : string).
 
@@ -182,20 +209,56 @@ Fixpoint run_goals (G : list edge) (gs : list catom) : search :=
       end
   end.
 
-Definition prove (ob : obligation) : verdict cert :=
-  match run_goals (graph_of ob) (goal_atoms ob) with
-  | SCert c => if check_cert ob c then Proved c else Unknown "the certificate does not check"
-  | SCounter m =>
-      let cm := cmodel_of m in
-      if check_counter cm ob then Refuted cm
-      else Unknown "the model of the fragment does not falsify the obligation (a dropped hypothesis)"
-  | SUnknown why => Unknown why
+(** One attempt: the steps [els] applied, the reduced obligation
+    decided; the certificate is checked, and the model, extended by the
+    eliminated nodes, is checked on the original obligation. *)
+Definition attempt (els : list elim) (ob : obligation) : verdict cert :=
+  match reduce els ob with
+  | None => Unknown "the elimination does not apply"
+  | Some ob' =>
+      match run_goals (graph_of ob') (goal_atoms ob') with
+      | SCert cs =>
+          let c := mkCert els cs in
+          if check_cert ob c then Proved c else Unknown "the certificate does not check"
+      | SCounter m =>
+          let cm := back_subst els (cmodel_of m) in
+          if check_counter cm ob then Refuted cm
+          else Unknown "the model of the fragment does not falsify the obligation (a dropped hypothesis)"
+      | SUnknown why => Unknown why
+      end
   end.
+
+(** The obligation as it is; if that gives no answer, after the
+    elimination of equalities. *)
+Definition prove (ob : obligation) : verdict cert :=
+  match attempt [] ob with
+  | Unknown why =>
+      match elims_of ob with
+      | [] => Unknown why
+      | els =>
+          match attempt els ob with
+          | Unknown why' => Unknown ("after the elimination of equalities: " ++ why')
+          | v => v
+          end
+      end
+  | v => v
+  end.
+
+Lemma attempt_sound : forall els ob, verdict_sound ob (attempt els ob).
+Proof.
+  intros els ob. unfold verdict_sound, attempt.
+  destruct (reduce els ob) as [ob' | ]; [ | exact I].
+  destruct (run_goals (graph_of ob') (goal_atoms ob')) as [c | m | why]; [ | | exact I].
+  - destruct (check_cert ob (mkCert els c)) eqn:E; [exact (check_cert_sound ob _ E) | exact I].
+  - destruct (check_counter (back_subst els (cmodel_of m)) ob) eqn:E; [exact (check_counter_sound _ _ E) | exact I].
+Qed.
 
 Theorem prove_sound : oracle_sound prove.
 Proof.
-  intros ob. unfold verdict_sound, prove.
-  destruct (run_goals (graph_of ob) (goal_atoms ob)) as [c | m | why]; [ | | exact I].
-  - destruct (check_cert ob c) eqn:E; [exact (check_cert_sound ob c E) | exact I].
-  - destruct (check_counter (cmodel_of m) ob) eqn:E; [exact (check_counter_sound _ _ E) | exact I].
+  intros ob. unfold prove.
+  pose proof (attempt_sound [] ob) as H0.
+  destruct (attempt [] ob) as [c | m | why]; [exact H0 | exact H0 | ].
+  destruct (elims_of ob) as [|st els]; [exact I | ].
+  pose proof (attempt_sound (st :: els) ob) as H1.
+  destruct (attempt (st :: els) ob); [exact H1 | exact H1 | exact I].
 Qed.

@@ -8,7 +8,10 @@
    is independent of the one in Rocq: Floyd–Warshall for the longest
    paths instead of Bellman–Ford, linear forms as maps; an edge
    [a + w ≤ b] is entailed iff the graph is inconsistent or the longest
-   path from [a] to [b] weighs at least [w]. *)
+   path from [a] to [b] weighs at least [w].  The elimination of
+   equalities, tried as in Rocq when the obligation as it is gets no
+   answer, works on these maps and picks the nodes in their order, not
+   in the order of the terms. *)
 
 (* ---- syntax ---- *)
 
@@ -42,17 +45,18 @@ type obligation = { ob_label : label; ob_hyps : formula list; ob_goal : formula 
 (* A counter-model: the integer variables, the booleans, the lengths. *)
 type cmodel = { cm_int : (string * Z.t) list; cm_bool : (string * bool) list; cm_len : (string * Z.t) list }
 
-type ty = TyInt | TyBool | TyUnit | TyArr
+type ty = TyInt | TyBool | TyUnit | TyArr | TyList
 type atom = AVar of string | ANum of Z.t | ABool of bool | AUnit
 type cmp = CLt | CLe | CEq
 type cond = CAtom of atom | CCmp of cmp * atom * atom
-type prim = PAdd | PSub | PLength | PGet
+type prim = PAdd | PSub | PLength | PGet | PNil | PCons
 
 type expr =
   | ERet of atom
   | EPrim of string * prim * atom list * expr
   | ECall of string * string * atom list * expr
   | EIf of cond * expr * expr
+  | EMatch of string * expr * string * string * expr  (* match x with nil → e₁ | cons h t → e₂ *)
 
 type fundef = { fd_name : string; fd_params : (string * ty) list; fd_ret : ty; fd_body : expr }
 type prog = fundef list
@@ -252,34 +256,122 @@ let model_of (es : ed list) : cmodel =
 
 type nverdict = NProved | NRefuted of cmodel | NUnknown of string
 
-let prove (ob : obligation) : nverdict =
+(* [ob] decided by the graph; a model is extended by [back] and checked
+   on [orig].  The conjuncts of the goal are decided in order: the first
+   one refuted gives Refuted, the first one outside the fragment gives
+   Unknown, whatever follows it. *)
+let decide (ob : obligation) (orig : obligation) (back : cmodel -> cmodel) : nverdict =
   let hs = List.concat_map (decomp true) ob.ob_hyps in
   let hedges = List.concat_map (function Edge e -> [ e ] | No -> [ (Zero, Z.one, Zero) ] | _ -> []) hs in
   let gs = decomp true ob.ob_goal in
-  if List.exists (function Out _ -> true | _ -> false) gs then NUnknown "the goal is outside the difference fragment"
-  else
-    let gedges = List.concat_map (function Edge e -> [ e ] | _ -> []) gs in
-    let g = List.concat_map side (Array.to_list (nodes_of (hedges @ gedges))) @ hedges in
-    let nodes = nodes_of (g @ gedges) in
-    let d, idx = longest nodes g in
-    let incons = not (consistent nodes d) in
-    let counter es =
-      let m = model_of es in
-      if falsifies m ob then NRefuted m else NUnknown "the model of the fragment does not falsify the obligation"
+  let gedges = List.concat_map (function Edge e -> [ e ] | _ -> []) gs in
+  let g = List.concat_map side (Array.to_list (nodes_of (hedges @ gedges))) @ hedges in
+  let nodes = nodes_of (g @ gedges) in
+  let d, idx = longest nodes g in
+  let incons = not (consistent nodes d) in
+  let counter es =
+    let m = back (model_of es) in
+    if falsifies m orig then NRefuted m else NUnknown "the model of the fragment does not falsify the obligation"
+  in
+  let rec go = function
+    | [] -> NProved
+    | Yes :: rest -> go rest
+    | No :: rest -> if incons then go rest else counter g
+    | Edge (a, w, b) :: rest -> (
+        if incons then go rest
+        else
+          match d.(idx a).(idx b) with
+          | Some w' when Z.geq w' w -> go rest
+          | _ -> counter ((b, Z.sub Z.one w, a) :: g))
+    | Out _ :: _ -> NUnknown "the goal is outside the difference fragment"
+  in
+  go gs
+
+(* ---- the elimination of equalities ---- *)
+
+let term_of_nd = function I x -> Some (TVar x) | L a -> Some (TLen a) | _ -> None
+
+(* The term of a linear form, as a sum of [k·n] and the constant. *)
+let term_of_lf ((m, c) : lf) =
+  NM.fold
+    (fun n k acc ->
+      match term_of_nd n with
+      | Some t -> TAdd (acc, if Z.equal k Z.one then t else TMul (k, t))
+      | None -> failwith "a boolean node in a term")
+    m (TConst c)
+
+let rec tsub_node n s t =
+  match t with
+  | TVar x -> if n = I x then s else t
+  | TLen a -> if n = L a then s else t
+  | TConst _ -> t
+  | TAdd (a, b) -> TAdd (tsub_node n s a, tsub_node n s b)
+  | TSub (a, b) -> TSub (tsub_node n s a, tsub_node n s b)
+  | TMul (k, a) -> TMul (k, tsub_node n s a)
+
+let rec fsub_node n s = function
+  | FLe (a, b) -> FLe (tsub_node n s a, tsub_node n s b)
+  | FLt (a, b) -> FLt (tsub_node n s a, tsub_node n s b)
+  | FEq (a, b) -> FEq (tsub_node n s a, tsub_node n s b)
+  | FKappa (k, us) -> FKappa (k, List.map (function UInt t -> UInt (tsub_node n s t) | u -> u) us)
+  | FAnd (p, q) -> FAnd (fsub_node n s p, fsub_node n s q)
+  | FOr (p, q) -> FOr (fsub_node n s p, fsub_node n s q)
+  | FNot p -> FNot (fsub_node n s p)
+  | p -> p
+
+(* A definition [n = s] given by an equality: the first node, in the
+   order of the map, with the coefficient ±1. *)
+let definition = function
+  | FEq (a, b) ->
+      let m, c = lin (TSub (a, b)) in
+      NM.fold
+        (fun n k acc ->
+          match acc, term_of_nd n with
+          | None, Some _ when Z.equal (Z.abs k) Z.one ->
+              let rest = (NM.remove n m, c) in
+              Some (n, term_of_lf (lscale (Z.neg k) rest))
+          | _ -> acc)
+        m None
+  | _ -> None
+
+(* Eliminates the equalities one by one; the steps, last first. *)
+let eliminate (ob : obligation) =
+  let rec go hs g steps =
+    let rec split before = function
+      | [] -> None
+      | h :: after -> (
+          match definition h with Some (n, s) -> Some (n, s, List.rev before @ after) | None -> split (h :: before) after)
     in
-    let rec go = function
-      | [] -> NProved
-      | Yes :: rest -> go rest
-      | No :: rest -> if incons then go rest else counter g
-      | Edge (a, w, b) :: rest -> (
-          if incons then go rest
-          else
-            match d.(idx a).(idx b) with
-            | Some w' when Z.geq w' w -> go rest
-            | _ -> counter ((b, Z.sub Z.one w, a) :: g))
-      | Out _ :: _ -> NUnknown "the goal is outside the difference fragment"
-    in
-    go gs
+    match split [] hs with
+    | None -> (hs, g, steps)
+    | Some (n, s, rest) ->
+        let extra = match n with L _ -> [ FLe (TConst Z.zero, s) ] | _ -> [] in
+        go (List.map (fsub_node n s) rest @ extra) (fsub_node n s g) ((n, s) :: steps)
+  in
+  go (List.concat_map conjuncts ob.ob_hyps) ob.ob_goal []
+
+(* The eliminated nodes get the values of their terms, the last step
+   first. *)
+let restore steps (m : cmodel) =
+  List.fold_left
+    (fun m (n, s) ->
+      let z = tev (valn_of m) s in
+      match n with
+      | I x -> { m with cm_int = m.cm_int @ [ (x, z) ] }
+      | L a -> { m with cm_len = m.cm_len @ [ (a, z) ] }
+      | _ -> m)
+    m steps
+
+let prove (ob : obligation) : nverdict =
+  match decide ob ob (fun m -> m) with
+  | NUnknown why -> (
+      match eliminate ob with
+      | _, _, [] -> NUnknown why
+      | hs, g, steps -> (
+          match decide { ob with ob_hyps = hs; ob_goal = g } ob (restore steps) with
+          | NUnknown w -> NUnknown ("after the elimination of equalities: " ^ w)
+          | v -> v))
+  | v -> v
 
 (* ---- contracts and the generator ---- *)
 
@@ -294,8 +386,10 @@ let prim_params = function
   | PAdd | PSub -> [ ("x", TyInt); ("y", TyInt) ]
   | PLength -> [ ("a", TyArr) ]
   | PGet -> [ ("a", TyArr); ("i", TyInt) ]
+  | PNil -> []
+  | PCons -> [ ("h", TyInt); ("t", TyList) ]
 
-let prim_ret _ = TyInt
+let prim_ret = function PNil | PCons -> TyList | _ -> TyInt
 
 let prim_contract p =
   let v x = TVar x in
@@ -304,8 +398,15 @@ let prim_contract p =
   | PSub -> { c_pre = [ ftrue; ftrue ]; c_post = FEq (v nu, TSub (v "x", v "y")) }
   | PLength -> { c_pre = [ ftrue ]; c_post = FAnd (FEq (v nu, TLen "a"), FLe (TConst Z.zero, v nu)) }
   | PGet -> { c_pre = [ ftrue; FAnd (FLe (TConst Z.zero, v "i"), FLt (v "i", TLen "a")) ]; c_post = ftrue }
+  | PNil -> { c_pre = []; c_post = FEq (TLen nu, TConst Z.zero) }
+  | PCons -> { c_pre = [ ftrue; ftrue ]; c_post = FEq (TLen nu, TAdd (TConst Z.one, TLen "t")) }
 
-let prim_label = function PAdd -> "+" | PSub -> "-" | PLength -> "length" | PGet -> "get"
+let prim_label = function
+  | PAdd -> "+" | PSub -> "-" | PLength -> "length" | PGet -> "get" | PNil -> "nil" | PCons -> "cons"
+
+(* The equations of the measure len at the branches of a match. *)
+let nil_hyp x = FEq (TLen x, TConst Z.zero)
+let cons_hyp x t = FEq (TLen x, TAdd (TConst Z.one, TLen t))
 
 let aterm = function AVar x -> TVar x | ANum z -> TConst z | _ -> TConst Z.zero
 let abatom = function AVar x -> BVar x | ABool b -> BConst b | _ -> BConst false
@@ -314,7 +415,7 @@ let bind x t a s =
   match t, a with
   | TyInt, _ -> { s with ints = (x, aterm a) :: s.ints }
   | TyBool, _ -> { s with bools = (x, abatom a) :: s.bools }
-  | TyArr, AVar y -> { s with arrs = (x, y) :: s.arrs }
+  | (TyArr | TyList), AVar y -> { s with arrs = (x, y) :: s.arrs }
   | _ -> s
 
 let rec inst ps args =
@@ -356,6 +457,9 @@ let rec gen (p : prog) (s : spec) scope g phi e psi =
       | None -> emit (LPre (scope, f, x)) phi ffalse)
   | EIf (c, e1, e2) ->
       gen p s scope g (extend phi (cond_formula c)) e1 psi @ gen p s scope g (extend phi (FNot (cond_formula c))) e2 psi
+  | EMatch (x, e1, h, t, e2) ->
+      gen p s scope g (extend phi (nil_hyp x)) e1 psi
+      @ gen p s scope ((t, TyList) :: (h, TyInt) :: g) (extend phi (cons_hyp x t)) e2 psi
 
 let fun_obligations p s fd =
   let c = contract_of s fd in
@@ -394,17 +498,19 @@ let rec decreases (p : prog) (s : spec) f ps mu phi e =
   | EIf (c, e1, e2) ->
       decreases p s f ps mu (extend phi (cond_formula c)) e1
       @ decreases p s f ps mu (extend phi (FNot (cond_formula c))) e2
+  | EMatch (x, e1, _, t, e2) ->
+      decreases p s f ps mu (extend phi (nil_hyp x)) e1 @ decreases p s f ps mu (extend phi (cons_hyp x t)) e2
 
 (* The obligations of the measures, or the reason the measures are refused:
    a function the program does not define, two measures for one function,
-   a name other than an integer parameter or an array parameter. *)
+   a name other than an integer parameter or an array or list parameter. *)
 let measure_obligations (p : prog) (s : spec) (m : (string * term) list) =
   let names = List.map fst m in
   let find f = List.find_opt (fun fd -> fd.fd_name = f) p in
   let scoped (fd : fundef) mu =
     let ints, arrs = tnames mu in
     List.for_all (fun x -> List.mem (x, TyInt) fd.fd_params) ints
-    && List.for_all (fun a -> List.mem (a, TyArr) fd.fd_params) arrs
+    && List.for_all (fun a -> List.mem (a, TyArr) fd.fd_params || List.mem (a, TyList) fd.fd_params) arrs
   in
   if List.length (List.sort_uniq compare names) <> List.length names then Error "two measures for one function"
   else
@@ -500,11 +606,76 @@ type nanswer =
   | NUndecided of obligation
   | NFailed of string
 
+(* The checks of the unknowns before weakening: distinct names;
+   qualifiers without unknowns, over the formal parameters of their sorts
+   and no array; every unknown of the contracts and of the clients
+   declared and applied to arguments of its sorts.  An unknown is refused
+   here, never looked up in vain during weakening. *)
+let rec kappas = function
+  | FKappa (k, us) -> [ (k, us) ]
+  | FAnd (a, b) | FOr (a, b) -> kappas a @ kappas b
+  | FNot a -> kappas a
+  | _ -> []
+
+(* The integer variables, the boolean variables and the arrays of a
+   formula. *)
+let rec fnames = function
+  | FLe (a, b) | FLt (a, b) | FEq (a, b) ->
+      let i1, l1 = tnames a and i2, l2 = tnames b in
+      (i1 @ i2, [], l1 @ l2)
+  | FAtom (BVar x) -> ([], [ x ], [])
+  | FAtom (BConst _) -> ([], [], [])
+  | FKappa (_, us) ->
+      List.fold_left
+        (fun (i, b, l) u ->
+          match u with
+          | UInt t -> let i', l' = tnames t in (i @ i', b, l @ l')
+          | UBool (BVar x) -> (i, b @ [ x ], l)
+          | UBool (BConst _) -> (i, b, l))
+        ([], [], []) us
+  | FAnd (a, c) | FOr (a, c) ->
+      let i1, b1, l1 = fnames a and i2, b2, l2 = fnames c in
+      (i1 @ i2, b1 @ b2, l1 @ l2)
+  | FNot a -> fnames a
+
+let arg_sort = function UInt _ -> SInt | UBool _ -> SBool
+
+let kdecls_ok ds =
+  let names = List.map (fun d -> d.kd_name) ds in
+  List.length (List.sort_uniq compare names) = List.length names
+  && List.for_all
+       (fun d ->
+         let of_sort s = List.filter_map (fun (x, s') -> if s' = s then Some x else None) d.kd_formals in
+         List.for_all
+           (fun q ->
+             let ints, bools, lens = fnames q in
+             kappas q = []
+             && List.for_all (fun x -> List.mem x (of_sort SInt)) ints
+             && List.for_all (fun b -> List.mem b (of_sort SBool)) bools
+             && lens = [])
+           d.kd_quals)
+       ds
+
+let kappas_declared ds f =
+  List.for_all
+    (fun (k, us) ->
+      match List.find_opt (fun d -> d.kd_name = k) ds with
+      | Some d -> List.map arg_sort us = List.map snd d.kd_formals
+      | None -> false)
+    (kappas f)
+
 (* The removed qualifiers in order, and the answer. *)
 let infer (p : prog) (t : tspec) (cls : client list) =
   match instantiate p t with
   | Error why -> ([], NFailed why)
   | Ok (s, ds) ->
+  let declared fs = List.for_all (kappas_declared ds) fs in
+  if not (kdecls_ok ds) then ([], NFailed "the qualifiers: scope, sorts or unknowns")
+  else if not (List.for_all (fun (_, c) -> declared (c.c_post :: c.c_pre)) s) then
+    ([], NFailed "the templates: an unknown not declared or of other sorts")
+  else if not (List.for_all (fun (cl : client) -> declared (cl.cl_post :: cl.cl_pre)) cls) then
+    ([], NFailed "the clients: an unknown not declared or of other sorts")
+  else
   let obs = List.concat_map (client_obligations p s) cls @ prog_obligations p s in
   let hs = List.concat_map normalize obs in
   if List.exists (fun h -> not (List.for_all (function FKappa _ -> true | f -> kfree f) h.hyps)
@@ -523,9 +694,12 @@ let infer (p : prog) (t : tspec) (cls : client list) =
             match h.goal with
             | `F _ -> ()
             | `K (k, us) ->
-                let d = List.find (fun d -> d.kd_name = k) ds in
+                let d, qs =
+                  match List.find_opt (fun d -> d.kd_name = k) ds, List.assoc_opt k !sol with
+                  | Some d, Some qs -> (d, qs)
+                  | _ -> raise (Stop (NFailed ("an unknown not declared: " ^ k)))
+                in
                 let a = List.map (apply_sol ds !sol) h.hyps in
-                let qs = List.assoc k !sol in
                 let kept =
                   List.filter
                     (fun q ->

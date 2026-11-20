@@ -13,15 +13,26 @@ rocq: Makefile.coq
 # The extracted algorithms: the demonstrations of the lecture (make demo),
 # the regression tests of the extract and the differential test of the
 # native reference against it (make test).
-extract:
-	$(MAKE) -C extraction extract
+#
+# The single build of the Rocq development and then the single extraction
+# finish before them, also under make -j: the sub-makes are told so
+# (ROCQ_BUILT=1, EXTRACTED=1) and start neither again.  Run directly in
+# extraction/ or reference/, they build and extract first.
+extract: rocq
+	$(MAKE) -C extraction extract ROCQ_BUILT=1
 
-demo:
-	$(MAKE) -C extraction run
+demo: extract
+	$(MAKE) -C extraction run EXTRACTED=1
 
-test:
-	$(MAKE) -C extraction test
-	$(MAKE) -C reference test
+test: extract
+	$(MAKE) -C extraction test EXTRACTED=1
+	$(MAKE) -C reference test EXTRACTED=1
+
+# Dune refuses a second instance in extraction/: asked for together, the
+# demonstrations and the tests run one after the other.
+ifneq ($(filter demo,$(MAKECMDGOALS)),)
+test: | demo
+endif
 
 # Every proved contract is closed under the global context: no axioms.
 CONTRACTS := theories/Contracts.v
@@ -40,7 +51,7 @@ assumptions: rocq
 	    echo "assumptions: $$closed contracts closed under the global context"; \
 	  else echo "$$out"; echo "assumptions: only $$closed of $$expected contracts are axiom-free"; exit 1; fi
 
-check: rocq assumptions test
+check: assumptions test
 
 clean:
 	@if test -f Makefile.coq; then $(MAKE) -f Makefile.coq clean; fi

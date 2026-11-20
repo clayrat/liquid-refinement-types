@@ -142,7 +142,7 @@ inc x =
       true
   [result of client]
     0 ≤ r1 ∧ r1 < 4, 0 ≤ r2 ∧ r2 < 4, d = r1 - r2 ⊢ d = 0
-    Unknown: the model of the fragment does not falsify the obligation (a dropped hypothesis)
+    Refuted: r1 = 1, r2 = 0, d = 1
   => rejected
   run client: Value 0
 
@@ -315,3 +315,87 @@ loop x =
     ⊢ x < x
     Refuted: any valuation
   => rejected
+
+=== 5. Lists: the length of append ===
+
+-- the program; the branches of match get len xs = 0 and len xs = 1 + len t
+append : xs:List Int → ys:List Int → {ν:List Int | len ν = len xs + len ys}
+append xs ys =
+  match xs with
+  | nil →
+      ys
+  | cons h t →
+      let r = append t ys in
+      let z = cons h r in
+      z
+  [result of append]
+    len xs = 0 ⊢ len ys = len xs + len ys
+    Proved
+      0 ≤ len xs by the cycle [0 ≤ len xs; len xs + 1 ≤ 0]
+      len xs ≤ 0 by the cycle [len xs ≤ 0; 1 ≤ len xs]
+  [result of append]
+    len xs = 1 + len t, len r = len t + len ys, len z = 1 + len r ⊢ len z = len xs + len ys
+    Proved
+      eliminate len xs := len t + 1
+      eliminate len r := len t + len ys
+      eliminate len z := len t + len ys + 1
+      true
+      true
+  => accepted
+
+-- the summands swapped: len ν = len ys + len xs
+  append : xs:List Int → ys:List Int → {ν:List Int | len ν = len ys + len xs}
+  [result of append]
+    len xs = 0 ⊢ len ys = len ys + len xs
+    Proved
+      0 ≤ len xs by the cycle [0 ≤ len xs; len xs + 1 ≤ 0]
+      len xs ≤ 0 by the cycle [len xs ≤ 0; 1 ≤ len xs]
+  [result of append]
+    len xs = 1 + len t, len r = len ys + len t, len z = 1 + len r ⊢ len z = len ys + len xs
+    Proved
+      eliminate len xs := len t + 1
+      eliminate len r := len ys + len t
+      eliminate len z := len ys + len t + 1
+      true
+      true
+  => accepted
+
+-- a wrong contract: len ν = len xs
+  append : xs:List Int → ys:List Int → {ν:List Int | len ν = len xs}
+  [result of append]
+    len xs = 0 ⊢ len ys = len xs
+    Refuted: len ys = 1, len xs = 0
+  [result of append]
+    len xs = 1 + len t, len r = len t, len z = 1 + len r ⊢ len z = len xs
+    Proved
+      len z ≤ len xs by the cycle [len r ≤ len t; len t + 1 ≤ len xs; len xs + 1 ≤ len z; len z - 1 ≤ len r]
+      len xs ≤ len z by the cycle [len z + 1 ≤ len xs; len xs - 1 ≤ len t; len t ≤ len r; len r + 1 ≤ len z]
+  => rejected
+
+-- termination: the measure len xs
+  [measure of append non-negative]
+    ⊢ 0 ≤ len xs
+    Proved
+      0 ≤ len xs by the cycle [0 ≤ len xs; len xs + 1 ≤ 0]
+  [measure of append decreases at r]
+    len xs = 1 + len t ⊢ len t < len xs
+    Proved
+      len t + 1 ≤ len xs by the cycle [len xs ≤ len t; len t + 1 ≤ len xs]
+  => accepted
+  the fuel of append: 2·len xs + 2 (append_fuel, Examples/Append.v)
+  run append [1; 2] [3] with fuel 5: Timeout
+  run append [1; 2] [3] with fuel 6: Value [1; 2; 3]
+
+-- the elimination of equalities, exercise 1: d = y − x, the goal 0 < d
+  free: x:Int, y:Int
+  assumed: 0 ≤ x, x < y
+    let d = y - x in
+    d
+  required: 0 < ν
+  [result of client]
+    0 ≤ x, x < y, d = y - x ⊢ 0 < d
+    Proved
+      eliminate d := y - x
+      x + 1 ≤ y by the cycle [y ≤ x; x + 1 ≤ y]
+  => accepted
+  run client with x = 1, y = 3: Value 2

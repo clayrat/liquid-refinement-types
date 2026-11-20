@@ -81,7 +81,8 @@ let () =
             (gen RuleName p s fd.fd_name fd.fd_params pre fd.fd_body c.c_post
              = flatten pre (wp RuleName p s fd.fd_name fd.fd_params fd.fd_body c.c_post)))
         p)
-    [ (bounded, bounded_spec); (inc_prog, inc_spec); (sum_prog, sum_spec); (loop_prog, loop_spec) ]
+    [ (bounded, bounded_spec); (inc_prog, inc_spec); (sum_prog, sum_spec); (loop_prog, loop_spec);
+      (append_prog, append_spec) ]
 
 (* Malformed input is refused, not trimmed: a template of an unknown
    function, two refinements for one parameter, two templates or two
@@ -148,8 +149,64 @@ let () =
      | Refuted m -> check_counter m refuted && List.assoc "y" m.cm_int = big 71
      | _ -> false);
   (* a certificate is checked, not trusted: a forged cycle is rejected *)
-  let forged = [ CertCycle (Some ((NInt "y", zi 0), NZero), [ ((NZero, big 63), NZero) ]) ] in
+  let forged = { cert_elim = []; cert_items = [ CertCycle (Some ((NInt "y", zi 0), NZero), [ ((NZero, big 63), NZero) ]) ] } in
   expect_true "a forged certificate is rejected" (not (check_cert proved forged))
+
+(* Stage 8: lists, append in both orders, the elimination of equalities
+   with its steps checked, and the fuel of append exact: 2·len xs + 1
+   times out, 2·len xs + 2 returns xs ++ ys. *)
+let () =
+  let is_err = function Err _ -> true | Ok _ -> false in
+  expect_true "append accepted" (accepted_r (check_prog prove append_prog append_spec));
+  expect_true "append with the summands swapped accepted" (accepted_r (check_prog prove append_prog append_spec_swapped));
+  expect_true "append with len ν = len xs rejected" (not (accepted_r (check_prog prove append_prog append_spec_wrong)));
+  expect_true "measure len xs of append accepted"
+    (accepted_r (check_measures prove append_prog append_spec append_measures));
+  expect_true "measure len ys of append rejected"
+    (not (accepted_r (check_measures prove append_prog append_spec [ ("append", TLen "ys") ])));
+  expect_true "a measure over the local t is refused"
+    (is_err (check_measures prove append_prog append_spec [ ("append", TLen "t") ]));
+  expect_true "exercise 1 accepted" (accepted_r (check_client prove [] [] client_ex1));
+  expect_true "two calls f 0 refuted"
+    (match check_client prove bounded bounded_spec client_twice with
+     | Ok [ _; _; (ob, Refuted m) ] -> check_counter m ob
+     | _ -> false);
+  expect_true "gen = flatten wp: append"
+    (let c = contract_of append_spec append_def in
+     gen RuleName append_prog append_spec "append" append_def.fd_params [] append_def.fd_body c.c_post
+     = flatten [] (wp RuleName append_prog append_spec "append" append_def.fd_params append_def.fd_body c.c_post));
+  (* the branch cons: proved with steps of elimination; the steps are checked *)
+  (match check_prog prove append_prog append_spec with
+   | Ok [ _; (ob, Proved c) ] ->
+       expect "append, cons: the steps"
+         (String.concat "; " (List.map elim_step c.cert_elim))
+         "eliminate len xs := len t + 1; eliminate len r := len t + len ys; eliminate len z := len t + len ys + 1";
+       expect_true "append, cons: without the steps the certificate fails"
+         (not (check_cert ob { c with cert_elim = [] }));
+       expect_true "append, cons: a forged step is rejected"
+         (not (check_cert ob { c with cert_elim = [ (NLen "r", TLen "t") ] }))
+   | _ -> expect_true "append, cons: proved" false);
+  (* an obligation with a large constant, eliminated *)
+  let x = TVar "x" and y = TVar "y" and d = TVar "d" in
+  let ob g = { ob_label = LResult "big";
+               ob_hyps = [ FEq (d, TSub (TAdd (x, y), TConst (big 80))); FEq (y, TConst (big 81)); FLe (TConst (big 80), x) ];
+               ob_goal = g } in
+  let proved = ob (FLe (TConst (big 81), d)) and refuted = ob (FLt (TConst (big 81), d)) in
+  expect_true "d = x + y − 2^80, y = 2^81, 2^80 ≤ x ⊢ 2^81 ≤ d proved by elimination"
+    (match prove proved with Proved c -> c.cert_elim <> [] && check_cert proved c | _ -> false);
+  expect_true "d = x + y − 2^80, y = 2^81, 2^80 ≤ x ⊢ 2^81 < d refuted, d and y restored"
+    (match prove refuted with
+     | Refuted m -> check_counter m refuted && List.assoc "d" m.cm_int = big 81 && List.assoc "y" m.cm_int = big 81
+     | _ -> false);
+  List.iter
+    (fun (xs, ys) ->
+      let n = List.length xs in
+      let name = Printf.sprintf "append of lengths %d and %d" n (List.length ys) in
+      let args = [ VList (List.map zi xs); VList (List.map zi ys) ] in
+      expect (name ^ " with fuel 2n + 1") (answer (run_fun (zi (2 * n + 1)) append_prog "append" args)) "Timeout";
+      expect (name ^ " with fuel 2n + 2") (answer (run_fun (zi (2 * n + 2)) append_prog "append" args))
+        ("Value " ^ value (VList (List.map zi (xs @ ys)))))
+    [ ([], []); ([], [ 1 ]); ([ 1 ], []); ([ 1; 2 ], [ 3 ]); ([ 5; 4; 3; 2 ], [ 1; 0 ]) ]
 
 let () =
   Printf.printf "%d checks, %d failures\n" !checks !failures;

@@ -1,8 +1,17 @@
 OCAMLFIND ?= ocamlfind
 GENERATED := ../extraction/generated
 
-.PHONY: all test clean
+.PHONY: all extract test clean
 all: test
+
+# Run from the top-level Makefile, the extract is ready (EXTRACTED=1);
+# run here, it is built first.
+ifeq ($(EXTRACTED),)
+PREPARE := extract
+endif
+
+extract:
+	$(MAKE) -C ../extraction extract
 
 # The native reference is self-contained: it is compiled first, on its
 # own, where the extract is not visible, so that a use of anything of the
@@ -15,8 +24,7 @@ all: test
 WARNINGS := -w +A-4-9-40-41-42-44-45-70 -warn-error +A
 OCAMLC := $(OCAMLFIND) ocamlc -package zarith
 
-test:
-	$(MAKE) -C ../extraction extract
+test: $(PREPARE)
 	mkdir -p _build
 	$(OCAMLC) $(WARNINGS) -c -o _build/liquid_native liquid_native.ml
 	cp $(GENERATED)/liquid.ml $(GENERATED)/liquid.mli _build/

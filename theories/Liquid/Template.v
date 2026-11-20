@@ -14,13 +14,15 @@
     parameters of [κ] have the names of these variables, so the
     qualifiers are written over the variables of the program: the hole
     of [i] in [go a n i] is [κ(i, n)], with qualifiers such as [0 ≤ i]
-    or [i < n].  The arrays are not arguments of [κ] in this version.
+    or [i < n].  The arrays and lists are not arguments of [κ] in this
+    version.
 
     [instantiate] rejects, rather than drops, a template it cannot
-    turn into a contract.  [kdecls_ok] checks the qualifiers: well-sorted formulas whose free
-    names are formal parameters, and distinct names of unknowns.
-    Patterns of qualifiers instantiated by the variables in scope are
-    the next step. *)
+    turn into a contract.  [kdecls_ok] checks the qualifiers:
+    well-sorted formulas whose free names are formal parameters,
+    without unknowns ([kdecls_ok_quals]), and distinct names of
+    unknowns.  Patterns of qualifiers instantiated by the variables in
+    scope are the next step. *)
 
 From Stdlib Require Import String List Bool ZArith.
 Import ListNotations.
@@ -149,6 +151,15 @@ Definition scope_of_formals (fs : list (string * sort)) : scope :=
 Definition kdecls_ok (D : list kdecl) : bool :=
   distinct (map kd_name D)
   && forallb (fun d => forallb (formula_ok [] (scope_of_formals (kd_formals d))) (kd_quals d)) D.
+
+(** Checked declarations have qualifiers without unknowns, as
+    [weaken_kfree_queries] requires. *)
+Lemma kdecls_ok_quals : forall D, kdecls_ok D = true -> quals_kfree D.
+Proof.
+  intros D H. unfold kdecls_ok in H. apply andb_prop in H as [_ H]. rewrite forallb_forall in H.
+  apply Forall_forall. intros d Hd. specialize (H d Hd). rewrite forallb_forall in H.
+  apply Forall_forall. intros q Hq. exact (formula_ok_kfree _ q (H q Hq)).
+Qed.
 
 (** The contracts with a solution substituted for the unknowns. *)
 Definition apply_spec (D : list kdecl) (sol : solution) (S : spec) : spec :=

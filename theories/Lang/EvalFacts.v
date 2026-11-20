@@ -6,7 +6,10 @@
     - [eval_typed]: in a typed program and an environment of the
       declared types, a typed expression answers [Timeout], a [Value] of
       its type, or [Stuck] on [get] out of bounds: no failure of typing
-      is reached. *)
+      is reached;
+    - an environment extended by a name fresh for [Γ] keeps the types of
+      [Γ] ([env_ok_fresh]) and the values of the atoms typed in [Γ]
+      ([eval_atoms_fresh]). *)
 
 From Stdlib Require Import String List Bool ZArith Lia.
 Import ListNotations.
@@ -15,6 +18,23 @@ From Liquid.Lang Require Import Syntax Eval Typing.
 
 Local Open Scope Z_scope.
 
+(** ** Lookup *)
+
+Lemma lookup_In : forall {A} y (l : list (string * A)) a, lookup y l = Some a -> In (y, a) l.
+Proof.
+  intros A y l. induction l as [|[z b] l IH]; intros a H; cbn in H; [discriminate H | ].
+  destruct (String.eqb_spec y z) as [-> | ]; [injection H as ->; now left | right; auto].
+Qed.
+
+Lemma lookup_cons_neq : forall {A} x y (a : A) l, y <> x -> lookup y ((x, a) :: l) = lookup y l.
+Proof. intros A x y a l H. cbn. destruct (String.eqb_spec y x); [contradiction | reflexivity]. Qed.
+
+Lemma lookup_none_not_in : forall {A} x (l : list (string * A)), lookup x l = None -> ~ In x (map fst l).
+Proof.
+  intros A x l. induction l as [|[y a] l IH]; cbn; [auto | ].
+  destruct (String.eqb_spec x y); [discriminate | ]. intros H [<- | Hin]; [congruence | exact (IH H Hin)].
+Qed.
+
 (** ** Monotonicity in fuel *)
 
 Lemma evalFuel_mono : forall k k' P ρ e a,
@@ -22,7 +42,7 @@ Lemma evalFuel_mono : forall k k' P ρ e a,
 Proof.
   induction k as [|k IH]; intros k' P ρ e a Hle H Ha; cbn in H; [congruence | ].
   destruct k' as [|k']; [lia | ]. cbn.
-  destruct e as [a0 | x p args e' | x f args e' | c e1 e2].
+  destruct e as [a0 | x p args e' | x f args e' | c e1 e2 | x e1 h t e2].
   - exact H.
   - destruct (eval_atoms ρ args); [ | exact H].
     destruct (eval_prim p l); [ | exact H]. apply IH; auto. lia.
@@ -35,6 +55,7 @@ Proof.
     + congruence.
     + rewrite (IH k' P ρf (fd_body fd) (Stuck why)); [exact H | lia | exact Eb | discriminate].
   - destruct (eval_cond ρ c) as [[|] | ]; [ | | exact H]; apply IH; auto; lia.
+  - destruct (lookup x ρ) as [[| | | | [|z l]] | ]; try exact H; apply IH; auto; lia.
 Qed.
 
 Corollary evalFuel_value_mono : forall k k' P ρ e v,
@@ -45,7 +66,7 @@ Proof. intros. eapply evalFuel_mono; eauto. discriminate. Qed.
 
 Definition has_ty (v : value) (T : ty) : Prop :=
   match v, T with
-  | VInt _, TyInt | VBool _, TyBool | VUnit, TyUnit | VArr _, TyArr => True
+  | VInt _, TyInt | VBool _, TyBool | VUnit, TyUnit | VArr _, TyArr | VList _, TyList => True
   | _, _ => False
   end.
 
@@ -59,6 +80,12 @@ Lemma env_ok_cons : forall ρ Γ x v T, env_ok ρ Γ -> has_ty v T -> env_ok ((x
 Proof.
   intros ρ Γ x v T H Hv y U Hy. cbn in *.
   destruct (String.eqb y x); [injection Hy as <-; eauto | auto].
+Qed.
+
+Lemma env_ok_fresh : forall Γ ρ x v, lookup x Γ = None -> env_ok ρ Γ -> env_ok ((x, v) :: ρ) Γ.
+Proof.
+  intros Γ ρ x v Hx H y T Hy. rewrite lookup_cons_neq; [exact (H y T Hy) | ].
+  intros ->. rewrite Hx in Hy. discriminate.
 Qed.
 
 Lemma eval_atom_typed : forall ρ Γ a T, env_ok ρ Γ -> atom_ty Γ a = Some T ->
@@ -81,6 +108,18 @@ Proof.
     exists (v :: vs). split; [reflexivity | constructor; auto].
 Qed.
 
+Lemma eval_atoms_fresh : forall Γ ρ x v args Ts,
+  lookup x Γ = None -> atoms_ty Γ args = Some Ts -> eval_atoms ((x, v) :: ρ) args = eval_atoms ρ args.
+Proof.
+  intros Γ ρ x v args. induction args as [|a args IH]; intros Ts Hx Ha; cbn in *; [reflexivity | ].
+  destruct (atom_ty Γ a) as [T | ] eqn:Ea; [ | discriminate].
+  destruct (atoms_ty Γ args) as [Ts' | ]; [ | discriminate].
+  rewrite (IH Ts' Hx eq_refl).
+  assert (E : eval_atom ((x, v) :: ρ) a = eval_atom ρ a).
+  { destruct a; cbn in Ea |- *; try reflexivity. apply lookup_cons_neq. intros ->. congruence. }
+  now rewrite E.
+Qed.
+
 Lemma bind_params_typed : forall ps vs, Forall2 has_ty vs (map snd ps) ->
   exists ρ, bind_params ps vs = Some ρ /\ env_ok ρ ps.
 Proof.
@@ -89,6 +128,12 @@ Proof.
   - inversion H as [|v T' vs' Ts Hv Hvs]; subst.
     destruct (IH vs' Hvs) as (ρ & -> & Hρ).
     exists ((x, v) :: ρ). split; [reflexivity | ]. apply env_ok_cons; auto.
+Qed.
+
+Lemma bind_params_env_ok : forall ps vs ρf, bind_params ps vs = Some ρf -> Forall2 has_ty vs (map snd ps) -> env_ok ρf ps.
+Proof.
+  intros ps vs ρf Hb Hvs. destruct (bind_params_typed ps vs Hvs) as (ρ' & E & H).
+  rewrite Hb in E. injection E as <-. exact H.
 Qed.
 
 Lemma eval_prim_typed : forall p vs, Forall2 has_ty vs (fst (prim_sig p)) ->
@@ -103,7 +148,7 @@ Proof.
     repeat match goal with
            | v : value |- _ => destruct v; cbn in *; try contradiction
            end; cbn.
-  1-3: left; eexists; split; [reflexivity | exact I].
+  all: try (left; eexists; split; [reflexivity | exact I]).
   unfold get_at. destruct (_ && _); [left; eexists; split; [reflexivity | exact I] | right; eauto].
 Qed.
 
@@ -128,7 +173,7 @@ Theorem eval_typed : forall k P ρ Γ e T,
   ty_prog P = Ok tt -> env_ok ρ Γ -> ty_expr P Γ e = Ok T -> typed_answer (evalFuel k P ρ e) T.
 Proof.
   induction k as [|k IH]; intros P ρ Γ e T HP Hρ He; [left; reflexivity | ].
-  destruct e as [a | x p args e' | x f args e' | c e1 e2]; cbn in He |- *.
+  destruct e as [a | x p args e' | x f args e' | c e1 e2 | x e1 h t e2]; cbn in He |- *.
   - destruct (atom_ty Γ a) as [T' | ] eqn:Ea; [ | discriminate He]. injection He as <-.
     destruct (eval_atom_typed ρ Γ a T' Hρ Ea) as (v & -> & Hv). right; left; eauto.
   - bind_in He u1 H1. bind_in He u2 H2.
@@ -155,4 +200,14 @@ Proof.
     destruct (eval_cond_typed ρ Γ c Hρ (require_ok _ _ _ H1)) as (b & ->).
     apply require_ok, ty_eqb_eq in H2. subst T2.
     destruct b; eapply IH; eauto.
+  - bind_in He u1 H1. bind_in He u2 H2. bind_in He u3 H3. bind_in He T1 HT1. bind_in He T2 HT2.
+    bind_in He u4 H4. injection He as <-.
+    apply require_ok in H1. destruct (lookup x Γ) as [[] | ] eqn:Ex; try discriminate H1.
+    destruct (Hρ x TyList Ex) as (v & Ev & Hv). rewrite Ev.
+    destruct v as [| | | | l]; try contradiction.
+    apply require_ok, ty_eqb_eq in H4. subst T2.
+    destruct l as [|z l].
+    + eapply IH; eauto.
+    + eapply IH; [exact HP | | exact HT2].
+      apply env_ok_cons; [apply env_ok_cons; [exact Hρ | exact I] | exact I].
 Qed.

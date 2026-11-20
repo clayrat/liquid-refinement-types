@@ -84,6 +84,27 @@ Definition go_template (qs : list formula) : ctemplate :=
 
 Definition sum_tspec (qs : list formula) : tspec := [("sum", of_contract sum_contract); ("go", go_template qs)].
 
+(** A client of [go], checked separately: the call at [i = n].  It is
+    the first constraint weakening meets, and removes [i < n] and
+    [i = 0] before the definitions do; [0 ≤ i ∧ i ≤ n] is inferred all
+    the same. *)
+Definition client_go_n : client :=
+  mkClient [("a", TyArr); ("n", TyInt)] [FEq (TVar "n") (TLen "a"); FLe (TConst 0) (TVar "n")]
+           (lcall "r" "go" [AVar "a"; AVar "n"; AVar "n"] (ERet "r")) ftrue.
+
+(** A qualifier outside the difference fragment: [0 ≤ i + n] holds
+    under the invariant, but a sum of two variables is not a difference.
+    At the recursive call weakening asks [0 ≤ j + n]; the solver answers
+    [Unknown], also after eliminating [j = i + 1], and the inference
+    answers [Undecided] rather than remove a qualifier that may be true.
+    In a contract checked by the first algorithm the same refinement
+    leaves an obligation [Unknown], and the program is not accepted. *)
+Definition sum_qual : formula := FLe (TConst 0) (TAdd (TVar "i") (TVar "n")).
+
+Definition quals_outside : list formula := quals ++ [sum_qual].
+
+Definition sum_spec_outside : spec := sum_spec_with (FAnd i_invariant sum_qual).
+
 (** ** Termination
 
     The measure of [go] is the number of elements left, [n − i]: it is

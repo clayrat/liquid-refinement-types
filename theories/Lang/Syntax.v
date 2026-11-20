@@ -3,9 +3,10 @@
       a ::= x | n | true | false | ()
       c ::= a | a₁ < a₂ | a₁ ≤ a₂ | a₁ = a₂
       e ::= ret a
-          | let x = op(a₁, …, aₖ) in e      op ∈ {+, −, length, get}
+          | let x = op(a₁, …, aₖ) in e      op ∈ {+, −, length, get, nil, cons}
           | let x = f(a₁, …, aₖ) in e
           | if c then e₁ else e₂
+          | match x with nil → e₁ | cons h t → e₂
 
     The condition of a branch is an atom or a comparison of atoms, so
     that it enters the hypotheses as a ready atom of the logic: writing
@@ -17,6 +18,12 @@
     may call any function of the list, itself included; there are no
     local functions.  Arrays are immutable arrays of integers.
 
+    Lists of integers (stage 8) are built by the primitives [nil] and
+    [cons h t] and taken apart by [match] on a variable, which binds the
+    head and the tail in the second branch.  Their length exists only in
+    the logic, under [len], as for arrays; there is no primitive
+    [length] on lists.
+
     The contracts are not here: [prog] has no refinements, and the
     evaluator of Lang/Eval.v takes a [prog] only.  Independence of the
     annotations holds by the type of the evaluator.
@@ -27,7 +34,7 @@
 From Stdlib Require Import String List ZArith.
 Import ListNotations.
 
-Inductive ty : Type := TyInt | TyBool | TyUnit | TyArr.
+Inductive ty : Type := TyInt | TyBool | TyUnit | TyArr | TyList.
 
 Definition ty_eq_dec (t1 t2 : ty) : {t1 = t2} + {t1 <> t2}.
 Proof. decide equality. Defined.
@@ -46,13 +53,14 @@ Inductive cond : Type :=
 | CAtom (a : atom)
 | CCmp (c : cmp) (a1 a2 : atom).
 
-Inductive prim : Type := PAdd | PSub | PLength | PGet.
+Inductive prim : Type := PAdd | PSub | PLength | PGet | PNil | PCons.
 
 Inductive expr : Type :=
 | ERet (a : atom)
 | EPrim (x : string) (p : prim) (args : list atom) (e : expr)
 | ECall (x : string) (f : string) (args : list atom) (e : expr)
-| EIf (c : cond) (e1 e2 : expr).
+| EIf (c : cond) (e1 e2 : expr)
+| EMatch (x : string) (e1 : expr) (h t : string) (e2 : expr).
 
 Record fundef : Type := mkFun {
   fd_name : string;
@@ -70,7 +78,9 @@ Fixpoint find_fun (f : string) (P : prog) : option fundef :=
   end.
 
 Definition prim_name (p : prim) : string :=
-  match p with PAdd => "+" | PSub => "-" | PLength => "length" | PGet => "get" end.
+  match p with
+  | PAdd => "+" | PSub => "-" | PLength => "length" | PGet => "get" | PNil => "nil" | PCons => "cons"
+  end.
 
 (** ** Helpers for writing programs *)
 
@@ -83,3 +93,6 @@ Definition llength (x : string) (a : atom) (e : expr) : expr := EPrim x PLength 
 Definition lget (x : string) (a i : atom) (e : expr) : expr := EPrim x PGet [a; i] e.
 Definition lcall (x : string) (f : string) (args : list atom) (e : expr) : expr := ECall x f args e.
 Definition ifc (c : cmp) (a1 a2 : atom) (e1 e2 : expr) : expr := EIf (CCmp c a1 a2) e1 e2.
+Definition lnil (x : string) (e : expr) : expr := EPrim x PNil [] e.
+Definition lcons (x : string) (h t : atom) (e : expr) : expr := EPrim x PCons [h; t] e.
+Definition lmatch (x : string) (e1 : expr) (h t : string) (e2 : expr) : expr := EMatch x e1 h t e2.

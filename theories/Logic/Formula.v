@@ -8,7 +8,7 @@
       p ::= t ≤ t | t < t | t = t | β | κ(u₁, …, uₖ) | p ∧ p | p ∨ p | ¬p
 
     [x] is an integer variable, [b] a boolean one, [a] the name of an
-    array, which occurs only under [len]; [u] is an argument with its
+    array or a list, which occurs only under [len]; [u] is an argument with its
     sort explicit, Int or Bool.  The three kinds of names live in three
     namespaces: a valuation gives an integer to every [x], a boolean to
     every [b] and an integer to every [len a].  It is total, so that the
@@ -254,7 +254,7 @@ Proof. intros ki ki' ρ p H. rewrite <- !pevalb_holds. now rewrite (pevalb_kfree
 (** ** Free names
 
     The names of each namespace that a formula mentions: integer
-    variables, boolean variables, arrays under [len]. *)
+    variables, boolean variables, arrays and lists under [len]. *)
 
 Fixpoint tvars (t : term) : list string :=
   match t with
@@ -415,6 +415,17 @@ Fixpoint kappas_ok (K : ksig) (p : formula) : bool :=
 Definition formula_ok (K : ksig) (sc : scope) (p : formula) : bool :=
   subset (fvars p) (sc_int sc) && subset (fbvars p) (sc_bool sc) && subset (flens p) (sc_arr sc)
   && kappas_ok K p.
+
+(** With no unknowns declared, a well-formed formula has none. *)
+Lemma formula_ok_kfree : forall sc p, formula_ok [] sc p = true -> kfree p = true.
+Proof.
+  intros sc p H. unfold formula_ok in H. apply andb_prop in H as [_ H].
+  induction p as [| | | | k us | p IHp q IHq | p IHp q IHq | p IHp]; cbn in H |- *; try reflexivity.
+  - discriminate H.
+  - apply andb_prop in H as [H1 H2]. now rewrite IHp, IHq.
+  - apply andb_prop in H as [H1 H2]. now rewrite IHp, IHq.
+  - now apply IHp.
+Qed.
 
 (** ** Counter-models
 

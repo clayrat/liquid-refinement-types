@@ -1,8 +1,9 @@
 (** * Sorted simultaneous substitution
 
     A substitution has three parts, one per namespace: integer variables
-    are replaced by terms, boolean variables by boolean atoms, arrays by
-    arrays.  The last part acts under [len]: [[a ↦ xs](len a) = len xs].
+    are replaced by terms, boolean variables by boolean atoms, arrays and
+    lists by arrays and lists.  The last part acts under [len]:
+    [[a ↦ xs](len a) = len xs].
     The boolean part allows [[b ↦ true]], in formulas and in the
     arguments of [κ] alike.  Every part is simultaneous: the image of a
     name is never substituted again.  Formulas have no binders, so there
@@ -116,26 +117,24 @@ Proof. intros ki ρ σ p q. rewrite !holds_subst. apply holds_fand. Qed.
 
 (** ** Sorts and scopes are preserved *)
 
-Definition incl_b (xs ys : list string) : Prop := forall x, In x xs -> In x ys.
-
 Definition subst_ok (sc sc' : scope) (σ : subst) : Prop :=
   (forall x, In x (sc_int sc) ->
      match assoc x (s_int σ) with
-     | Some t => incl_b (tvars t) (sc_int sc') /\ incl_b (tlens t) (sc_arr sc')
+     | Some t => incl (tvars t) (sc_int sc') /\ incl (tlens t) (sc_arr sc')
      | None => In x (sc_int sc')
      end) /\
   (forall b, In b (sc_bool sc) ->
      match assoc b (s_bool σ) with
-     | Some b' => incl_b (bvars b') (sc_bool sc')
+     | Some b' => incl (bvars b') (sc_bool sc')
      | None => In b (sc_bool sc')
      end) /\
   (forall a, In a (sc_arr sc) -> In (arr_image σ a) (sc_arr sc')).
 
 Lemma tsubst_scope : forall sc sc' σ t, subst_ok sc sc' σ ->
-  incl_b (tvars t) (sc_int sc) -> incl_b (tlens t) (sc_arr sc) ->
-  incl_b (tvars (tsubst σ t)) (sc_int sc') /\ incl_b (tlens (tsubst σ t)) (sc_arr sc').
+  incl (tvars t) (sc_int sc) -> incl (tlens t) (sc_arr sc) ->
+  incl (tvars (tsubst σ t)) (sc_int sc') /\ incl (tlens (tsubst σ t)) (sc_arr sc').
 Proof.
-  intros sc sc' σ t (Hi & _ & Ha). unfold incl_b.
+  intros sc sc' σ t (Hi & _ & Ha). unfold incl.
   induction t; cbn; intros Hx Hl.
   - specialize (Hi x (Hx x (or_introl eq_refl))).
     destruct (assoc x (s_int σ)) as [t' | ]; [exact Hi | ].
@@ -163,58 +162,46 @@ Proof.
   destruct (assoc k K); [apply sorts_match_subst | reflexivity].
 Qed.
 
-Lemma incl_app_l : forall xs ys zs, incl_b (xs ++ ys) zs -> incl_b xs zs.
-Proof. intros xs ys zs H x Hx. apply H, in_or_app. now left. Qed.
-
-Lemma incl_app_r : forall xs ys zs, incl_b (xs ++ ys) zs -> incl_b ys zs.
-Proof. intros xs ys zs H x Hx. apply H, in_or_app. now right. Qed.
-
-Lemma incl_app : forall xs ys zs, incl_b xs zs -> incl_b ys zs -> incl_b (xs ++ ys) zs.
-Proof. intros xs ys zs H1 H2 x Hx. apply in_app_or in Hx as [Hx | Hx]; auto. Qed.
-
-Lemma incl_nil : forall zs, incl_b [] zs.
-Proof. intros zs x []. Qed.
-
 Lemma incl_flat_map : forall {A} (f : A -> list string) (l : list A) zs,
-  (forall a, In a l -> incl_b (f a) zs) -> incl_b (flat_map f l) zs.
+  (forall a, In a l -> incl (f a) zs) -> incl (flat_map f l) zs.
 Proof. intros A f l zs H x Hx. apply in_flat_map in Hx as (a & Ha & Hx). exact (H a Ha x Hx). Qed.
 
 Lemma incl_flat_map_in : forall {A} (f : A -> list string) (l : list A) zs a,
-  incl_b (flat_map f l) zs -> In a l -> incl_b (f a) zs.
+  incl (flat_map f l) zs -> In a l -> incl (f a) zs.
 Proof. intros A f l zs a H Ha x Hx. apply H, in_flat_map. eauto. Qed.
 
 Lemma bsubst_scope : forall sc sc' σ b, subst_ok sc sc' σ ->
-  incl_b (bvars b) (sc_bool sc) -> incl_b (bvars (bsubst σ b)) (sc_bool sc').
+  incl (bvars b) (sc_bool sc) -> incl (bvars (bsubst σ b)) (sc_bool sc').
 Proof.
-  intros sc sc' σ [x | c] (_ & Hb & _) H; cbn in *; [ | apply incl_nil].
+  intros sc sc' σ [x | c] (_ & Hb & _) H; cbn in *; [ | apply incl_nil_l].
   specialize (Hb x (H x (or_introl eq_refl))).
   destruct (assoc x (s_bool σ)) as [b' | ]; [exact Hb | ].
   intros y [<- | []]. exact Hb.
 Qed.
 
 Lemma fsubst_scope : forall sc sc' σ p, subst_ok sc sc' σ ->
-  incl_b (fvars p) (sc_int sc) -> incl_b (fbvars p) (sc_bool sc) -> incl_b (flens p) (sc_arr sc) ->
-  incl_b (fvars (fsubst σ p)) (sc_int sc') /\ incl_b (fbvars (fsubst σ p)) (sc_bool sc')
-  /\ incl_b (flens (fsubst σ p)) (sc_arr sc').
+  incl (fvars p) (sc_int sc) -> incl (fbvars p) (sc_bool sc) -> incl (flens p) (sc_arr sc) ->
+  incl (fvars (fsubst σ p)) (sc_int sc') /\ incl (fbvars (fsubst σ p)) (sc_bool sc')
+  /\ incl (flens (fsubst σ p)) (sc_arr sc').
 Proof.
   intros sc sc' σ p Hσ. induction p; cbn; intros Hx Hb Hl.
   1-3:
-    destruct (tsubst_scope sc sc' σ t1 Hσ (incl_app_l _ _ _ Hx) (incl_app_l _ _ _ Hl)) as [A1 B1];
-    destruct (tsubst_scope sc sc' σ t2 Hσ (incl_app_r _ _ _ Hx) (incl_app_r _ _ _ Hl)) as [A2 B2];
-    split; [apply incl_app; auto | split; [apply incl_nil | apply incl_app; auto]].
-  - split; [apply incl_nil | split; [apply (bsubst_scope sc); auto | apply incl_nil]].
+    apply incl_app_inv in Hx as [Hx1 Hx2], Hl as [Hl1 Hl2];
+    destruct (tsubst_scope sc sc' σ t1 Hσ Hx1 Hl1) as [A1 B1]; destruct (tsubst_scope sc sc' σ t2 Hσ Hx2 Hl2) as [A2 B2];
+    split; [apply incl_app; auto | split; [apply incl_nil_l | apply incl_app; auto]].
+  - split; [apply incl_nil_l | split; [apply (bsubst_scope sc); auto | apply incl_nil_l]].
   - rewrite !flat_map_concat_map, !map_map, <- !flat_map_concat_map.
-    split; [ | split]; apply incl_flat_map; intros [t | b] Hu; cbn; try apply incl_nil.
+    split; [ | split]; apply incl_flat_map; intros [t | b] Hu; cbn; try apply incl_nil_l.
     + exact (proj1 (tsubst_scope sc sc' σ t Hσ (incl_flat_map_in uvars us _ _ Hx Hu)
                                               (incl_flat_map_in ulens us _ _ Hl Hu))).
     + exact (bsubst_scope sc sc' σ b Hσ (incl_flat_map_in ubvars us _ _ Hb Hu)).
     + exact (proj2 (tsubst_scope sc sc' σ t Hσ (incl_flat_map_in uvars us _ _ Hx Hu)
                                               (incl_flat_map_in ulens us _ _ Hl Hu))).
-  - destruct (IHp1 (incl_app_l _ _ _ Hx) (incl_app_l _ _ _ Hb) (incl_app_l _ _ _ Hl)) as (A1 & B1 & C1).
-    destruct (IHp2 (incl_app_r _ _ _ Hx) (incl_app_r _ _ _ Hb) (incl_app_r _ _ _ Hl)) as (A2 & B2 & C2).
+  - apply incl_app_inv in Hx as [Hx1 Hx2], Hb as [Hb1 Hb2], Hl as [Hl1 Hl2].
+    destruct (IHp1 Hx1 Hb1 Hl1) as (A1 & B1 & C1). destruct (IHp2 Hx2 Hb2 Hl2) as (A2 & B2 & C2).
     split; [ | split]; apply incl_app; auto.
-  - destruct (IHp1 (incl_app_l _ _ _ Hx) (incl_app_l _ _ _ Hb) (incl_app_l _ _ _ Hl)) as (A1 & B1 & C1).
-    destruct (IHp2 (incl_app_r _ _ _ Hx) (incl_app_r _ _ _ Hb) (incl_app_r _ _ _ Hl)) as (A2 & B2 & C2).
+  - apply incl_app_inv in Hx as [Hx1 Hx2], Hb as [Hb1 Hb2], Hl as [Hl1 Hl2].
+    destruct (IHp1 Hx1 Hb1 Hl1) as (A1 & B1 & C1). destruct (IHp2 Hx2 Hb2 Hl2) as (A2 & B2 & C2).
     split; [ | split]; apply incl_app; auto.
   - apply IHp; auto.
 Qed.

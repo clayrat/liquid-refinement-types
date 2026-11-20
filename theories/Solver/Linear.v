@@ -184,9 +184,6 @@ Fixpoint decomp (pos : bool) (p : formula) : list catom :=
   | FKappa _ _ => [COut p pos]
   end.
 
-Lemma Forall_app_iff : forall {A} (P : A -> Prop) l1 l2, Forall P (l1 ++ l2) <-> Forall P l1 /\ Forall P l2.
-Proof. intros. apply Forall_app. Qed.
-
 Lemma Forall_one : forall {A} (P : A -> Prop) a, Forall P [a] <-> P a.
 Proof. intros A P a. split; [intros H; inversion H; auto | intros H; constructor; auto]. Qed.
 
@@ -219,9 +216,9 @@ Proof.
         try (intros; constructor); try congruence; try (intros H; exfalso; apply H; reflexivity).
   - rewrite Forall_one. reflexivity.
   - destruct pos; [ | rewrite Forall_one; reflexivity].
-    rewrite Forall_app_iff, (IHp1 true), (IHp2 true). reflexivity.
+    rewrite Forall_app, (IHp1 true), (IHp2 true). reflexivity.
   - destruct pos; [rewrite Forall_one; reflexivity | ].
-    rewrite Forall_app_iff, (IHp1 false), (IHp2 false). cbn. tauto.
+    rewrite Forall_app, (IHp1 false), (IHp2 false). cbn. tauto.
   - rewrite (IHp (negb pos)). destruct pos; cbn; [reflexivity | ].
     destruct (holds_dec ki ρ p); tauto.
 Qed.

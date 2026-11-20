@@ -10,14 +10,17 @@
 
     The readiness levels of the plan:
     1. an executable artifact: both algorithms, the extraction with exact
-       integers, the demonstrations 1–4, the regressions and the native
+       integers, the demonstrations 1–5, the regressions and the native
        reference compared with the extract: reached;
     2. proved, without axioms: the certificates of the difference solver,
        the soundness of [prove], [gen] as the unfolding of [wp], the
        contracts of the primitives, the operational guarantee of the first
        algorithm with recursive contracts, the termination of weakening
-       within its fuel, and the result of inference accepted by the first
-       algorithm: reached;
+       within its fuel, its queries to the oracle without unknowns, and
+       the result of inference accepted by the first
+       algorithm: reached; with stage 8, the elimination of equalities in
+       the solver, the lists in the guarantee, and [append] in both
+       orders of the summands, also by [lia];
     3. open: the completeness of the solver on its fragment, the strongest
        solution of weakening and its independence of the order of the
        constraints, and termination from the obligations of measure.
@@ -39,11 +42,11 @@ From Stdlib Require Import String List Bool ZArith Permutation.
 Import ListNotations.
 From Liquid.Common Require Import Result Traced.
 From Liquid.Logic Require Import Formula Subst Obligation.
-From Liquid.Solver Require Import Diff Linear Prove.
+From Liquid.Solver Require Import Diff Linear Elim Prove.
 From Liquid.Lang Require Import Syntax Typing Eval EvalFacts.
-From Liquid.Refine Require Import Spec Wp Gen Check Sound Measure.
+From Liquid.Refine Require Import Spec Wp Gen Check Env Sound Measure.
 From Liquid.Liquid Require Import Horn Weaken Template Infer.
-From Liquid.Examples Require Import Sum Loop.
+From Liquid.Examples Require Import Sum Loop Append.
 
 Local Open Scope string_scope.
 Local Open Scope list_scope.
@@ -77,6 +80,15 @@ Definition proof_certificate_sound : Prop :=
 
 Theorem proof_certificate_sound_holds : proof_certificate_sound.
 Proof. exact check_cert_sound. Qed.
+
+(** The elimination of equalities (stage 8): if the obligation reduced by
+    checked steps is valid, so is the original.  The steps are a part of
+    the certificate of [Proved]. *)
+Definition elimination_sound : Prop :=
+  forall els ob ob', reduce els ob = Some ob' -> valid ob' -> valid ob.
+
+Theorem elimination_sound_holds : elimination_sound.
+Proof. exact reduce_sound. Qed.
 
 (** A checked counter-model satisfies the hypotheses and violates the
     goal. *)
@@ -212,27 +224,29 @@ Definition infer_rechecked : Prop :=
 Theorem infer_rechecked_holds : infer_rechecked.
 Proof. intros C oracle. exact (infer_checked oracle). Qed.
 
+(** Weakening asks the oracle only obligations without unknowns: for
+    constraints of the shape of [horn_of] ([horn_ok], Liquid/Weaken.v)
+    and checked declarations, two oracles that agree on such
+    obligations give the same run, the trace included. *)
+Definition weaken_asks_kfree : Prop :=
+  forall C (o1 o2 : obligation -> verdict C) D hs,
+    kdecls_ok D = true -> Forall (horn_ok D) hs ->
+    (forall ob, ob_kfree ob = true -> o1 ob = o2 ob) ->
+    forall log, weaken o1 D hs log = weaken o2 D hs log.
+
+Theorem weaken_asks_kfree_holds : weaken_asks_kfree.
+Proof. intros C o1 o2 D hs HD. exact (weaken_kfree_queries C o1 o2 D hs (kdecls_ok_quals D HD)). Qed.
+
 (** *** Open: the strongest solution *)
 
-(** An oracle that never answers [Unknown]; with soundness it decides
-    validity. *)
-Definition oracle_complete {C} (oracle : obligation -> verdict C) : Prop :=
-  forall ob why, oracle ob <> Unknown why.
-
-Fixpoint fkappas (p : formula) : list string :=
-  match p with
-  | FKappa k _ => [k]
-  | FAnd p q | FOr p q => fkappas p ++ fkappas q
-  | FNot p => fkappas p
-  | _ => []
-  end.
-
-(** A constraint of the shape [horn_of] gives, over the unknowns of [D]:
-    an unknown is a whole hypothesis or the whole goal. *)
-Definition horn_ok (D : list kdecl) (h : horn) : Prop :=
-  forallb hyp_shape_ok (h_hyps h) = true /\
-  (match h_goal h with HFixed p => kfree p = true | HKappa _ _ => True end) /\
-  Forall (fun k => In k (map kd_name D)) (flat_map fkappas (hgoal_formula (h_goal h) :: h_hyps h)).
+(** The hypothesis on the oracle is [oracle_complete] of
+    Logic/Obligation.v: no [Unknown] on obligations without unknowns,
+    the only ones weakening asks ([weaken_asks_kfree]).  Not on every
+    obligation: [⊢ ¬κ()] is neither valid nor refutable, so no sound
+    oracle answers it, and such a hypothesis would make the contracts
+    below vacuous.  On obligations without unknowns a falsifying
+    valuation gives a counter-model ([kfree_refutable]); Tests.v builds,
+    with classical logic, a sound oracle complete in this sense. *)
 
 (** A solution in [Q]: every unknown keeps some of its qualifiers. *)
 Definition within (D : list kdecl) (sol : solution) : Prop :=
@@ -249,8 +263,9 @@ Definition horn_under (D : list kdecl) (sol : solution) (h : horn) : obligation 
 Definition solves (D : list kdecl) (hs : list horn) (sol : solution) : Prop :=
   Forall (fun h => valid (horn_under D sol h)) hs.
 
-(** Open: with a sound and complete oracle, weakening returns the
-    strongest solution in [Q], or a refutation when [Q] has none. *)
+(** Open: with an oracle sound and complete on the obligations without
+    unknowns, weakening returns the strongest solution in [Q], or a
+    refutation when [Q] has none. *)
 Definition weaken_strongest : Prop :=
   forall C (oracle : obligation -> verdict C) D hs,
     oracle_sound oracle -> oracle_complete oracle -> kdecls_ok D = true -> Forall (horn_ok D) hs ->
@@ -318,6 +333,48 @@ Definition loop_unmeasured : Prop :=
 
 Theorem loop_unmeasured_holds : loop_unmeasured.
 Proof. split; [vm_compute; reflexivity | exact loop_no_measure]. Qed.
+
+(** ** Lists and [append] (stage 8) *)
+
+(** The contract of the length of [append] is accepted in both orders of
+    the summands, a wrong one is not, and the measure [len xs] is. *)
+Definition append_checked : Prop :=
+  accepted (check_prog prove append_prog append_spec) = true /\
+  accepted (check_prog prove append_prog append_spec_swapped) = true /\
+  accepted (check_prog prove append_prog append_spec_wrong) = false /\
+  accepted (check_measures prove append_prog append_spec append_measures) = true.
+
+Theorem append_checked_holds : append_checked.
+Proof.
+  exact (conj append_accepted (conj append_swapped_accepted (conj append_wrong_rejected append_measure_accepted))).
+Qed.
+
+(** The same obligations are valid, proved by [lia] on the semantics,
+    independently of the solver. *)
+Definition append_valid_by_lia : Prop :=
+  (forall ob, In ob (prog_obligations RuleName append_prog append_spec) -> valid ob) /\
+  (forall ob, In ob (prog_obligations RuleName append_prog append_spec_swapped) -> valid ob).
+
+Theorem append_valid_by_lia_holds : append_valid_by_lia.
+Proof. exact (conj append_valid append_swapped_valid). Qed.
+
+(** [append] returns [xs ++ ys] with the fuel [2·len xs + 2]; whatever
+    it returns, at any fuel, has the length of its contract. *)
+Definition append_runs_exact : Prop :=
+  (forall xs ys k, (2 * length xs + 2 <= k)%nat ->
+     run_fun k append_prog "append" [VList xs; VList ys] = Value (VList (xs ++ ys))) /\
+  (forall xs ys k v, run_fun k append_prog "append" [VList xs; VList ys] = Value v ->
+     exists l, v = VList l /\ length l = (length xs + length ys)%nat).
+
+Theorem append_runs_exact_holds : append_runs_exact.
+Proof. split; [exact append_fuel | exact append_length]. Qed.
+
+(** Exercise 1: [d = y − x] eliminated, the goal [0 < d] is the
+    difference atom [0 < y − x]. *)
+Definition exercise1_checked : Prop := accepted (check_client prove [] [] client_ex1) = true.
+
+Theorem exercise1_checked_holds : exercise1_checked.
+Proof. exact client_ex1_accepted. Qed.
 
 (** Open: proved obligations of measure for the recursive functions and
     an order of the other calls imply termination on every input that

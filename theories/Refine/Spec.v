@@ -8,7 +8,7 @@
 
     The refinements mention the parameters by name: an integer parameter
     is an integer variable of the logic, a boolean parameter a boolean
-    variable, an array parameter the name of an array under [len]; a
+    variable, an array or list parameter a name under [len]; a
     parameter of type Unit has no logical occurrences.  A function with
     no entry in the table has the contract [true] everywhere.
 
@@ -17,7 +17,11 @@
     [true] and the exact result; [length] the precondition [true] and
     [ν = len a ∧ 0 ≤ ν]; [get] the precondition [0 ≤ i ∧ i < len a]
     and the postcondition [true]: the logic of this version says nothing
-    about the contents of arrays.
+    about the contents of arrays.  The equations of the measure [len] of
+    lists come as contracts too: [nil] returns [len ν = 0], [cons h t]
+    returns [len ν = 1 + len t]; the branches of [match x] get
+    [len x = 0] and [len x = 1 + len t] ([nil_hyp], [cons_hyp]).  There
+    is no general mechanism of measures.
 
     A call instantiates a contract by a sorted substitution of the
     formal parameters by the actual atoms ([inst_subst]), and of [ν] by
@@ -58,6 +62,8 @@ Definition prim_params (p : prim) : list (string * ty) :=
   | PAdd | PSub => [("x", TyInt); ("y", TyInt)]
   | PLength => [("a", TyArr)]
   | PGet => [("a", TyArr); ("i", TyInt)]
+  | PNil => []
+  | PCons => [("h", TyInt); ("t", TyList)]
   end.
 
 Definition prim_contract (p : prim) : contract :=
@@ -66,7 +72,13 @@ Definition prim_contract (p : prim) : contract :=
   | PSub => mkContract [ftrue; ftrue] (FEq (TVar nu) (TSub (TVar "x") (TVar "y")))
   | PLength => mkContract [ftrue] (FAnd (FEq (TVar nu) (TLen "a")) (FLe (TConst 0) (TVar nu)))
   | PGet => mkContract [ftrue; FAnd (FLe (TConst 0) (TVar "i")) (FLt (TVar "i") (TLen "a"))] ftrue
+  | PNil => mkContract [] (FEq (TLen nu) (TConst 0))
+  | PCons => mkContract [ftrue; ftrue] (FEq (TLen nu) (TAdd (TConst 1) (TLen "t")))
   end.
+
+(** The hypotheses of the branches of [match x with nil → e₁ | cons h t → e₂]. *)
+Definition nil_hyp (x : string) : formula := FEq (TLen x) (TConst 0).
+Definition cons_hyp (x t : string) : formula := FEq (TLen x) (TAdd (TConst 1) (TLen t)).
 
 (** ** From program atoms to the logic *)
 
@@ -89,7 +101,7 @@ Definition bind_atom (x : string) (T : ty) (a : atom) (σ : subst) : subst :=
   match T, a with
   | TyInt, _ => add_int x (aterm a) σ
   | TyBool, _ => add_bool x (abatom a) σ
-  | TyArr, AVar y => add_arr x y σ
+  | TyArr, AVar y | TyList, AVar y => add_arr x y σ
   | _, _ => σ
   end.
 
@@ -127,7 +139,12 @@ Definition cond_formula (c : cond) : formula :=
 
 Definition names_of (T : ty) (Γ : tenv) : list string := map fst (filter (fun p => ty_eqb (snd p) T) Γ).
 
-Definition scope_of (Γ : tenv) : scope := mkScope (names_of TyInt Γ) (names_of TyBool Γ) (names_of TyArr Γ).
+(** The types whose names occur under [len]: arrays and lists. *)
+Definition len_ty (T : ty) : bool := match T with TyArr | TyList => true | _ => false end.
+
+Definition names_len (Γ : tenv) : list string := map fst (filter (fun p => len_ty (snd p)) Γ).
+
+Definition scope_of (Γ : tenv) : scope := mkScope (names_of TyInt Γ) (names_of TyBool Γ) (names_len Γ).
 
 Fixpoint pres_ok (K : ksig) (seen : tenv) (ps : tenv) (pres : list formula) : bool :=
   match ps, pres with

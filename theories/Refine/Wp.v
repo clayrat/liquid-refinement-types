@@ -8,6 +8,11 @@
       wp(let r = f(ā) in e, ψ)          = Pre_f(ā) ∧ ∀r. Post_f(ā, r) ⇒ wp(e, ψ)
       wp(if c then e₁ else e₂, ψ)       = (c ⇒ wp(e₁, ψ)) ∧ (¬c ⇒ wp(e₂, ψ))
 
+    and for the lists of stage 8
+
+      wp(match x with nil → e₁ | cons h t → e₂, ψ)
+        = (len x = 0 ⇒ wp(e₁, ψ)) ∧ ∀h t. (len x = 1 + len t ⇒ wp(e₂, ψ))
+
     The values of [wp] are a small type of nested formulas with [∧],
     [p ⇒ w] and [∀r. w]; their leaves carry the label of the obligation
     they become.  The expression [get a i] does not enter the logic: the
@@ -22,8 +27,11 @@
     The rule of calls is a switch, for the second demonstration: with
     [RuleRoot] the hypothesis after a call is [Pre_f(x′) ∧ Post_f(x′, r)]
     with fresh [x′], as in the rule [APPᶜ] of the paper, and the link
-    with the actual argument is lost.  Only [RuleName] enters the
-    theorems of soundness. *)
+    with the actual argument is lost.  The copy [x′] of a parameter [x]
+    is named [r.x]: the names with a dot are reserved (Lang/Typing.v),
+    no program or client binds them ([reserved_copy]), and the copies
+    of two calls on one path differ ([copy_inj]).  Only [RuleName]
+    enters the theorems of soundness. *)
 
 From Stdlib Require Import String List Bool ZArith.
 Import ListNotations.
@@ -42,7 +50,8 @@ Inductive wpf : Type :=
 | WImp (h : formula) (w : wpf)
 | WAll (x : string) (w : wpf).
 
-(** The hypothesis after [let r = f(ā)]. *)
+(** The hypothesis after [let r = f(ā)]; under [RuleRoot], over the
+    reserved copies [r.x] of the parameters. *)
 Definition call_hyp (rule : call_rule) (c : contract) (ps : tenv) (ret : ty) (args : list atom) (r : string)
   : formula :=
   match rule with
@@ -77,6 +86,9 @@ Section Wp.
         end
     | EIf c e1 e2 =>
         WAnd (WImp (cond_formula c) (wp Γ e1 ψ)) (WImp (FNot (cond_formula c)) (wp Γ e2 ψ))
+    | EMatch x e1 h t e2 =>
+        WAnd (WImp (nil_hyp x) (wp Γ e1 ψ))
+             (WAll h (WAll t (WImp (cons_hyp x t) (wp ((t, TyList) :: (h, TyInt) :: Γ) e2 ψ))))
     end.
 End Wp.
 

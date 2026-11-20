@@ -13,6 +13,7 @@ theories/Logic/Obligation.v
 # Solver: the difference solver with certificates; independent of Lang.
 theories/Solver/Diff.v
 theories/Solver/Linear.v
+theories/Solver/Elim.v
 theories/Solver/Prove.v
 
 # Lang: the first-order language in ANF and its evaluator with fuel.
@@ -33,14 +34,18 @@ theories/Liquid/Weaken.v
 theories/Liquid/Template.v
 theories/Liquid/Infer.v
 
-# Examples of the lecture.
+# Examples of the lecture; Flags.v, the booleans of the tests.
 theories/Examples/Bounded.v
 theories/Examples/Inc.v
 theories/Examples/Calls.v
 theories/Examples/Sum.v
 theories/Examples/Loop.v
+theories/Examples/Append.v
+theories/Examples/Flags.v
 
-# The operational guarantee, measures and tests.
+# The operational guarantee: environments and scopes, then the induction
+# on fuel; measures and tests.
+theories/Refine/Env.v
 theories/Refine/Sound.v
 theories/Refine/Measure.v
 theories/Tests.v

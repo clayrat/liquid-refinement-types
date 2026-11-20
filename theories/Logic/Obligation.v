@@ -104,3 +104,59 @@ Proof.
   - apply Forall_forall. intros p Hp. rewrite forallb_forall in Hh. apply pevalb_holds, Hh, Hp.
   - intros Hgoal. apply pevalb_holds in Hgoal. rewrite Hgoal in Hg. discriminate Hg.
 Qed.
+
+(** ** Obligations without unknowns
+
+    On an obligation without unknowns the two answers of a sound oracle
+    are exhaustive: a valuation that falsifies it, for any interpretation
+    of the unknowns, kept on the names the obligation mentions, is a
+    counter-model ([kfree_refutable]).  With an unknown it is not so:
+    [⊢ ¬κ()] is not valid ([κ] read as true falsifies it) and has no
+    counter-model (a counter-model reads [κ] as false), so a sound oracle
+    can only answer [Unknown] on it. *)
+
+Definition ob_kfree (ob : obligation) : bool := forallb kfree (ob_hyps ob) && kfree (ob_goal ob).
+
+(** An oracle that answers every obligation without unknowns; with
+    [oracle_sound] it decides their validity.  Weakening asks only such
+    obligations (Liquid/Weaken.v, [weaken_kfree_queries]). *)
+Definition oracle_complete {C} (oracle : obligation -> verdict C) : Prop :=
+  forall ob why, ob_kfree ob = true -> oracle ob <> Unknown why.
+
+Definition ob_formulas (ob : obligation) : list formula := ob_goal ob :: ob_hyps ob.
+
+(** A valuation kept on the names of an obligation. *)
+Definition restrict (ρ : valuation) (ob : obligation) : cmodel :=
+  mkCModel (map (fun x => (x, vint ρ x)) (flat_map fvars (ob_formulas ob)))
+           (map (fun b => (b, vbool ρ b)) (flat_map fbvars (ob_formulas ob)))
+           (map (fun a => (a, vlen ρ a)) (flat_map flens (ob_formulas ob))).
+
+Lemma assoc_map : forall {A} (f : string -> A) x xs,
+  assoc x (map (fun y => (y, f y)) xs) = if memb x xs then Some (f x) else None.
+Proof.
+  intros A f x xs. induction xs as [|y xs IH]; [reflexivity | ].
+  cbn. destruct (String.eqb x y) eqn:E; [apply String.eqb_eq in E; subst; reflexivity | exact IH].
+Qed.
+
+Lemma restrict_agree : forall ρ ob p, In p (ob_formulas ob) ->
+  agree_on (fvars p) (fbvars p) (flens p) (val_of_cmodel (restrict ρ ob)) ρ.
+Proof.
+  intros ρ ob p Hp. unfold agree_on, val_of_cmodel, restrict. cbn [vint vbool vlen cm_int cm_bool cm_len].
+  repeat split; intros x Hx; rewrite assoc_map;
+    (replace (memb x _) with true; [reflexivity | symmetry; apply memb_In, in_flat_map; eauto]).
+Qed.
+
+Lemma kfree_refutable : forall ki ρ ob, ob_kfree ob = true -> lens_nonneg ρ ->
+  Forall (holds ki ρ) (ob_hyps ob) -> ~ holds ki ρ (ob_goal ob) ->
+  falsifies (val_of_cmodel (restrict ρ ob)) ob.
+Proof.
+  intros ki ρ ob Hk Hl Hh Hg. unfold ob_kfree in Hk. apply andb_prop in Hk as [Hkh Hkg].
+  rewrite forallb_forall in Hkh. split; [ | split].
+  - intros a. cbn [val_of_cmodel restrict vlen cm_len]. rewrite assoc_map. destruct (memb a _); [apply Hl | lia].
+  - apply Forall_forall. intros p Hp.
+    rewrite (holds_agree no_kappa _ ρ p (restrict_agree ρ ob p (or_intror Hp))).
+    rewrite (holds_kfree no_kappa ki ρ p (Hkh p Hp)).
+    exact (proj1 (Forall_forall _ _) Hh p Hp).
+  - rewrite (holds_agree no_kappa _ ρ _ (restrict_agree ρ ob _ (or_introl eq_refl))).
+    rewrite (holds_kfree no_kappa ki ρ _ Hkg). exact Hg.
+Qed.

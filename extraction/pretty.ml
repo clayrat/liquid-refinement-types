@@ -14,7 +14,7 @@ let zneg = Big_int_Z.minus_big_int
 
 (* ---- base types and programs ---- *)
 
-let ty = function TyInt -> "Int" | TyBool -> "Bool" | TyUnit -> "Unit" | TyArr -> "Array Int"
+let ty = function TyInt -> "Int" | TyBool -> "Bool" | TyUnit -> "Unit" | TyArr -> "Array Int" | TyList -> "List Int"
 
 let atom = function
   | AVar x -> x
@@ -34,6 +34,8 @@ let prim_app p args =
   | PSub, [ a; b ] -> atom a ^ " - " ^ atom b
   | PLength, [ a ] -> "length " ^ atom a
   | PGet, [ a; i ] -> "get " ^ atom a ^ " " ^ atom i
+  | PNil, [] -> "nil"
+  | PCons, [ h; t ] -> "cons " ^ atom h ^ " " ^ atom t
   | _ -> prim_name p ^ "(" ^ String.concat ", " (List.map atom args) ^ ")"
 
 let call_app f args = String.concat " " (f :: List.map atom args)
@@ -46,6 +48,9 @@ let rec expr ind e =
   | ECall (x, f, args, e') -> pad ^ "let " ^ x ^ " = " ^ call_app f args ^ " in\n" ^ expr ind e'
   | EIf (c, e1, e2) ->
       pad ^ "if " ^ cond c ^ " then\n" ^ expr (ind + 2) e1 ^ "\n" ^ pad ^ "else\n" ^ expr (ind + 2) e2
+  | EMatch (x, e1, h, t, e2) ->
+      pad ^ "match " ^ x ^ " with\n" ^ pad ^ "| nil →\n" ^ expr (ind + 4) e1 ^ "\n" ^ pad ^ "| cons " ^ h ^ " " ^ t
+      ^ " →\n" ^ expr (ind + 4) e2
 
 (* ---- the logic ---- *)
 
@@ -124,6 +129,8 @@ let cert_item = function
   | CertCycle (None, c) -> "hypotheses contradictory: " ^ cycle c
   | CertCycle (Some e, c) -> edge e ^ " by the cycle " ^ cycle c
 
+let elim_step ((n, s) : elim) = "eliminate " ^ node n ^ " := " ^ term s
+
 let cmodel (m : cmodel) =
   let ints = List.map (fun (x, z) -> x ^ " = " ^ zs z) m.cm_int in
   let bools = List.map (fun (b, c) -> b ^ " = " ^ string_of_bool c) m.cm_bool in
@@ -137,7 +144,9 @@ let verdict_short = function
 
 let verdict ind = function
   | Proved c ->
-      "Proved" ^ String.concat "" (List.map (fun ci -> "\n" ^ String.make ind ' ' ^ cert_item ci) c)
+      let line s = "\n" ^ String.make ind ' ' ^ s in
+      "Proved" ^ String.concat "" (List.map (fun st -> line (elim_step st)) c.cert_elim)
+      ^ String.concat "" (List.map (fun ci -> line (cert_item ci)) c.cert_items)
   | v -> verdict_short v
 
 (* ---- wp ---- *)
@@ -174,7 +183,7 @@ let value = function
   | VInt z -> zs z
   | VBool b -> string_of_bool b
   | VUnit -> "()"
-  | VArr l -> "[" ^ String.concat "; " (List.map zs l) ^ "]"
+  | VArr l | VList l -> "[" ^ String.concat "; " (List.map zs l) ^ "]"
 
 let answer = function
   | Value v -> "Value " ^ value v

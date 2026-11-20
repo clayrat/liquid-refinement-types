@@ -7,6 +7,9 @@
     - [Timeout]: the fuel ran out;
     - [Stuck why]: a partial primitive failed.
 
+    [match x with nil → e₁ | cons h t → e₂] runs [e₂] with the head of
+    the list bound to [h] and its tail to [t].
+
     Fuel decreases at every node, which is enough for an induction on
     one [k]; a call runs the body with the fuel left, and its
     continuation too.  The only primitive that gets stuck on well-typed
@@ -30,7 +33,8 @@ Inductive value : Type :=
 | VInt (z : Z)
 | VBool (b : bool)
 | VUnit
-| VArr (l : list Z).
+| VArr (l : list Z)
+| VList (l : list Z).
 
 Inductive stuck : Type :=
 | SBounds (arr : list Z) (i : Z) (len : Z)
@@ -78,6 +82,8 @@ Definition eval_prim (p : prim) (vs : list value) : result stuck value :=
   | PSub, [VInt a; VInt b] => Ok (VInt (a - b))
   | PLength, [VArr l] => Ok (VInt (Z.of_nat (List.length l)))
   | PGet, [VArr l; VInt i] => get_at l i
+  | PNil, [] => Ok (VList [])
+  | PCons, [VInt h; VList t] => Ok (VList (h :: t))
   | _, _ => Err (SType (prim_name p))
   end.
 
@@ -146,6 +152,12 @@ Fixpoint evalFuel (k : nat) (P : prog) (ρ : env) (e : expr) : answer :=
           | Some true => evalFuel k' P ρ e1
           | Some false => evalFuel k' P ρ e2
           | None => Stuck (SType "condition")
+          end
+      | EMatch x e1 h t e2 =>
+          match lookup x ρ with
+          | Some (VList []) => evalFuel k' P ρ e1
+          | Some (VList (z :: l)) => evalFuel k' P ((t, VList l) :: (h, VInt z) :: ρ) e2
+          | _ => Stuck (SType "match")
           end
       end
   end.
